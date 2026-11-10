@@ -215,6 +215,17 @@ polygons, instance-ID renumbering, and annotation painting are not included.
 
 ### Command-line generation and replay
 
+To try all paired target types on generated example data:
+
+```sh
+python tools/make_paired_demo.py
+python dataset.py generate data/paired-demo/inputs.json --recipe examples/random_preprocessing.json --output generated/paired-demo --variants 5 --seed 42
+python dataset.py replay generated/paired-demo/replay.jsonl --row 0 --output artifacts/paired-replay.png
+```
+
+The example includes one source per split; only the training source is augmented.
+Its uint16 mask deliberately uses class ID 300 to check class-ID preservation.
+
 ```sh
 python dataset.py generate inputs.json --recipe examples/random_preprocessing.json --output generated/run-1 --variants 5 --seed 42
 python dataset.py replay generated/run-1/replay.jsonl --row 0 --output replay.png
