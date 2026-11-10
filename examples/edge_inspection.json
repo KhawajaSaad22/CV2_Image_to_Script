@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "steps": [
+    {"id":"denoise","type":"gaussian_blur","enabled":true,"params":{"kernel":5,"sigma":1.2}},
+    {"id":"gray","type":"grayscale","enabled":true,"params":{}},
+    {"id":"edges","type":"canny","enabled":true,"params":{"low":50,"high":150}}
+  ]
+}

@@ -1,0 +1,62 @@
+import os
+os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
+import copy
+from pathlib import Path
+import tempfile
+import unittest
+import numpy as np
+from PySide6.QtWidgets import QApplication,QComboBox
+from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt
+from unittest.mock import patch
+import engine
+from workbench import Workbench
+
+class GuiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name)
+        self.image=np.random.default_rng(7).integers(0,256,(80,100,3),dtype=np.uint8)
+        engine.write_image(self.root/'one.png',self.image); engine.write_image(self.root/'two.png',np.zeros_like(self.image))
+        self.window=Workbench(); self.window.show(); self.window.load_paths([str(self.root/'one.png'),str(self.root/'two.png')]); self.wait_preview()
+    def tearDown(self):self.window.close(); self.app.processEvents(); self.temp.cleanup()
+    def wait_preview(self):
+        for _ in range(500):
+            self.app.processEvents(); QTest.qWait(10)
+            if self.window.final is not None:return
+        self.fail('Preview did not finish: '+self.window.metadata.text())
+    def add(self,kind):self.window.kind.setCurrentText(kind); self.window.add_step(); self.wait_preview()
+    def test_gallery_and_stage(self):
+        self.add('grayscale'); self.assertEqual(self.window.final.ndim,2)
+        self.assertEqual(self.window.stage.count(),2)
+        self.window.gallery.setCurrentRow(1); self.wait_preview(); self.assertEqual(self.window.final.max(),0)
+    def test_reorder_disable_history(self):
+        self.add('grayscale'); self.add('gaussian_blur'); ids=[s['id'] for s in self.window.document.pipeline['steps']]
+        self.window.move(-1); self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['id'],ids[1])
+        self.window.undo(); self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['id'],ids[0])
+        self.window.redo(); self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['id'],ids[1])
+    def test_rapid_edits_latest_wins(self):
+        self.add('brightness_contrast')
+        for value in range(0,80,5):self.window.change_parameter('brightness',value)
+        self.wait_preview(); expected=engine.run(self.image,self.window.document.pipeline)[0]
+        np.testing.assert_array_equal(self.window.final,expected)
+    def test_duplicate_remove(self):
+        self.add('gamma'); self.window.duplicate(); self.wait_preview()
+        self.assertEqual(len(set(s['id'] for s in self.window.document.pipeline['steps'])),2)
+        self.window.remove(); self.wait_preview(); self.assertEqual(len(self.window.document.pipeline['steps']),1)
+    def test_exact_mode(self):
+        self.window.exact.setChecked(True); self.wait_preview(); self.assertIn('EXACT',self.window.metadata.text())
+    def test_toggle_recomputes(self):
+        self.add('grayscale'); self.window.steps.item(0).setCheckState(Qt.CheckState.Unchecked); self.wait_preview()
+        np.testing.assert_array_equal(self.window.final,self.image)
+    def test_save_open_and_export(self):
+        self.add('gamma'); path=str(self.root/'pipeline.json'); script=str(self.root/'process.py')
+        with patch('workbench.QFileDialog.getSaveFileName',return_value=(path,'')):self.window.save_pipeline()
+        self.window.remove(); self.wait_preview()
+        with patch('workbench.QFileDialog.getOpenFileName',return_value=(path,'')):self.window.open_pipeline()
+        self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['type'],'gamma')
+        with patch('workbench.QFileDialog.getSaveFileName',return_value=(script,'')):self.window.export()
+        self.assertIn('run_cli(PIPELINE)',Path(script).read_text())
+
+if __name__=='__main__':unittest.main()
