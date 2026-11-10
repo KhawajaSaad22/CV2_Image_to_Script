@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 from PySide6.QtWidgets import QApplication,QComboBox
 from PySide6.QtTest import QTest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt,QCoreApplication,QEvent
 from unittest.mock import patch
 import engine
 from workbench import Workbench
@@ -15,12 +15,21 @@ from workbench import Workbench
 class GuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.processEvents(); cls.app.quit()
+        # Destroy Qt before Python module finalization (notably Python 3.12 on Windows).
+        import shiboken6
+        shiboken6.delete(cls.app); cls.app=None
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name)
         self.image=np.random.default_rng(7).integers(0,256,(80,100,3),dtype=np.uint8)
         engine.write_image(self.root/'one.png',self.image); engine.write_image(self.root/'two.png',np.zeros_like(self.image))
         self.window=Workbench(); self.window.show(); self.window.load_paths([str(self.root/'one.png'),str(self.root/'two.png')]); self.wait_preview()
-    def tearDown(self):self.window.close(); self.app.processEvents(); self.temp.cleanup()
+    def tearDown(self):
+        self.window.close(); self.window.deleteLater()
+        QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+        self.app.processEvents(); self.temp.cleanup()
     def wait_preview(self):
         for _ in range(500):
             self.app.processEvents(); QTest.qWait(10)
