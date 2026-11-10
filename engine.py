@@ -27,7 +27,7 @@ def choice(default, options): return dict(default=default, choices=options)
 OPERATIONS = {
     'resize': dict(width=number(640,1,16384,True), height=number(480,1,16384,True), interpolation=choice('area',['area','linear','nearest','cubic'])),
     'crop': dict(x=number(0,0,16384,True), y=number(0,0,16384,True), width=number(100,1,16384,True), height=number(100,1,16384,True)),
-    'rotate': dict(angle=number(0,-180,180,False,.1), border=choice('reflect',['reflect','black','white'])),
+    'rotate': dict(angle=number(0,-180,180,False,.1), border=choice('black',['reflect','black','white']), canvas=choice('expand',['expand','keep'])),
     'flip': dict(direction=choice('horizontal',['horizontal','vertical','both'])),
     'grayscale': {},
     'brightness_contrast': dict(brightness=number(0,-255,255,True), contrast=number(1,0,4,False,.01)),
@@ -49,6 +49,7 @@ def new_step(kind):
 
 
 def validate(pipeline):
+    pipeline=copy.deepcopy(pipeline)
     if not isinstance(pipeline,dict) or pipeline.get('version')!=VERSION: raise ValueError('Unsupported pipeline version')
     if not isinstance(pipeline.get('steps'),list) or len(pipeline['steps'])>100: raise ValueError('Expected up to 100 steps')
     ids=set()
@@ -61,6 +62,7 @@ def validate(pipeline):
         kind=step.get('type')
         if kind not in OPERATIONS: raise ValueError('Unknown operation: '+str(kind))
         params=step.get('params')
+        if kind=='rotate' and isinstance(params,dict):params.setdefault('canvas','expand')
         if not isinstance(params,dict) or set(params)!=set(OPERATIONS[kind]): raise ValueError('Unexpected parameters for '+kind)
         for key,spec in OPERATIONS[kind].items():
             value=params[key]
@@ -104,6 +106,15 @@ def validate(pipeline):
 
 def gray(image): return cv2.cvtColor(image,cv2.COLOR_RGB2GRAY) if image.ndim==3 else image
 
+def rotation_geometry(w,h,p):
+    matrix=cv2.getRotationMatrix2D(((w-1)/2,(h-1)/2),p['angle'],1)
+    nw,nh=w,h
+    if p.get('canvas','expand')=='expand':
+        cosine,sine=abs(matrix[0,0]),abs(matrix[0,1])
+        nw=max(1,math.ceil(w*cosine+h*sine-1e-10));nh=max(1,math.ceil(h*cosine+w*sine-1e-10))
+        matrix[0,2]+=(nw-w)/2;matrix[1,2]+=(nh-h)/2
+    return matrix,nw,nh
+
 
 def apply_operation(image,kind,p):
     if kind=='resize':
@@ -114,9 +125,8 @@ def apply_operation(image,kind,p):
         if x+w>image.shape[1] or y+h>image.shape[0]: raise ValueError('Crop extends outside image; adjust its bounds')
         return image[y:y+h,x:x+w].copy()
     if kind=='rotate':
-        h,w=image.shape[:2]; matrix=cv2.getRotationMatrix2D(((w-1)/2,(h-1)/2),p['angle'],1)
-        # Rotation preserves canvas dimensions; corners may be clipped.
-        return cv2.warpAffine(image,matrix,(w,h),borderMode=cv2.BORDER_REFLECT_101 if p['border']=='reflect' else cv2.BORDER_CONSTANT,borderValue=(255,255,255) if p['border']=='white' else 0)
+        h,w=image.shape[:2];matrix,nw,nh=rotation_geometry(w,h,p)
+        return cv2.warpAffine(image,matrix,(nw,nh),borderMode=cv2.BORDER_REFLECT_101 if p['border']=='reflect' else cv2.BORDER_CONSTANT,borderValue=(255,255,255) if p['border']=='white' else 0)
     if kind=='flip': return cv2.flip(image,{'horizontal':1,'vertical':0,'both':-1}[p['direction']])
     if kind=='grayscale': return gray(image)
     if kind=='brightness_contrast': return np.clip(image.astype(np.float32)*p['contrast']+p['brightness'],0,255).astype(np.uint8)

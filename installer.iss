@@ -1,7 +1,7 @@
 [Setup]
 AppId=CV2ImageToScriptWorkbench
 AppName=CV2 Pipeline Workbench
-AppVersion=0.2.0
+AppVersion=0.2.1
 DefaultDirName={localappdata}\Programs\CV2Workbench
 DefaultGroupName=CV2 Pipeline Workbench
 PrivilegesRequired=lowest

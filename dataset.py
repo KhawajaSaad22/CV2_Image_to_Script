@@ -7,7 +7,7 @@ import platform
 import cv2
 import numpy as np
 import engine
-from augmentation import sample,run_paired
+from augmentation import sample,run_paired,variation_summary
 
 def digest(path):
     h=hashlib.sha256()
@@ -58,13 +58,17 @@ def generate(records,recipe,output,variants=5,seed=42,min_visibility=0,progress=
             if r.get(key) and Path(r[key]).resolve().is_relative_to(output):raise ValueError('Output cannot contain input sources')
     if len({r['id'] for r in records})!=len(records):raise ValueError('Duplicate source IDs')
     output.mkdir(parents=True); (output/'images').mkdir(); (output/'masks').mkdir()
+    variation=variation_summary(recipe)
     status={'status':'running','generated':0,'requested':len(records)*variants,'recipe':recipe,'seed':seed,
+            'variation_rules':variation,'unique_images':0,'duplicate_images':0,
+            'warnings':[] if variation or variants==1 else ['No variable random settings: each source will produce identical copies. Configure min/max ranges, multiple choices, or an apply probability.'],
             'versions':{'python':platform.python_version(),'numpy':np.__version__,'opencv':cv2.__version__}}
     def checkpoint(): (output/'run.json').write_text(json.dumps(status,indent=2),encoding='utf-8')
     checkpoint(); generated=[]
     try:
         with (output/'replay.jsonl').open('w',encoding='utf-8') as replay:
             for record in records:
+                seen=set()
                 image=engine.read_image(record['image']); targets=load_targets(record)
                 source_hash=digest(record['image'])
                 mask_hash=digest(record['mask']) if record.get('mask') else None
@@ -72,9 +76,12 @@ def generate(records,recipe,output,variants=5,seed=42,min_visibility=0,progress=
                     if cancel and cancel():raise InterruptedError('Generation cancelled')
                     resolved=sample(recipe,seed,record['id'],variant)
                     result,transformed,dropped=run_paired(image,resolved,targets,min_visibility)
+                    pixel_hash=hashlib.sha256(str(result.shape).encode()+result.tobytes()).hexdigest()
+                    duplicate=pixel_hash in seen;seen.add(pixel_hash)
+                    status['duplicate_images' if duplicate else 'unique_images']+=1
                     name=hashlib.sha256(json.dumps([record['id'],source_hash,variant]).encode()).hexdigest()[:24]
                     image_path=Path('images')/(name+'.png'); engine.write_image(output/image_path,result)
-                    entry={'id':name,'source_id':record['id'],'variant':variant,'split':'train','image':image_path.as_posix()}
+                    entry={'id':name,'source_id':record['id'],'variant':variant,'split':'train','image':image_path.as_posix(),'duplicate_pixels_within_source':duplicate}
                     if transformed.get('mask') is not None:
                         mask_path=Path('masks')/(name+'.png'); write_mask(output/mask_path,transformed.pop('mask')); entry['mask']=mask_path.as_posix()
                     entry.update(transformed); generated.append(entry)
@@ -100,7 +107,11 @@ def replay_record(record,output):
     source=record['source']
     if digest(source['image'])!=record['source_sha256']:raise ValueError('Source image changed')
     if source.get('mask') and digest(source['mask'])!=record['mask_sha256']:raise ValueError('Source mask changed')
-    image,targets,dropped=run_paired(engine.read_image(source['image']),record['sampled_pipeline'],load_targets(source),record['min_visibility'])
+    import copy
+    pipeline=copy.deepcopy(record['sampled_pipeline'])
+    for step in pipeline['steps']:
+        if step['type']=='rotate':step['params'].setdefault('canvas','keep')
+    image,targets,dropped=run_paired(engine.read_image(source['image']),pipeline,load_targets(source),record['min_visibility'])
     engine.write_image(output,image)
     if targets.get('mask') is not None:
         write_mask(mask_path,targets.pop('mask'))

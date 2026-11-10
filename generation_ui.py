@@ -3,13 +3,14 @@ import copy
 import json
 from pathlib import Path
 import threading
+import secrets
 import cv2
 from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QDoubleSpinBox,
  QSpinBox,QPlainTextEdit,QDialogButtonBox,QFileDialog,QLineEdit,QProgressBar,QScrollArea,QMessageBox)
 import engine
-from augmentation import sample
+from augmentation import sample,variation_summary
 from dataset import contact_sheet,generate,read_manifest
 from project import export_script,export_bundle
 
@@ -21,7 +22,16 @@ class RandomSettings(QDialog):
         layout.addWidget(QLabel('Parameter rules (JSON): use {"min": value, "max": value} or {"choices": [...]}.\nLeave {} to keep every parameter fixed. Numeric kernels sample odd values only.'))
         self.editor=QPlainTextEdit();self.editor.setPlainText(json.dumps(step.get('random',{}).get('params',{}),indent=2));layout.addWidget(self.editor)
         defaults={key:({'choices':spec['choices']} if 'choices' in spec else {'min':step['params'][key],'max':step['params'][key]}) for key,spec in engine.OPERATIONS[step['type']].items()}
-        fill=QPushButton('Insert fixed-value rules as a starting point');fill.clicked.connect(lambda:self.editor.setPlainText(json.dumps(defaults,indent=2)));layout.addWidget(fill)
+        suggestions={
+            'rotate':{'angle':{'min':-15,'max':15}},
+            'brightness_contrast':{'brightness':{'min':-25,'max':25},'contrast':{'min':.8,'max':1.2}},
+            'gamma':{'gamma':{'min':.8,'max':1.2}},
+            'gaussian_blur':{'kernel':{'choices':[3,5,7]}},'median_blur':{'kernel':{'choices':[3,5,7]}},
+            'clahe':{'clip':{'min':1.,'max':4.}},'flip':{'direction':{'choices':['horizontal','vertical','both']}},
+            'canny':{'low':{'min':30,'max':80},'high':{'min':120,'max':200}},
+            'threshold':{'value':{'min':80,'max':180}},'morphology':{'kernel':{'choices':[3,5,7]}}
+        }
+        fill=QPushButton('Insert example random ranges (review before applying)');fill.clicked.connect(lambda:self.editor.setPlainText(json.dumps(suggestions.get(step['type'],defaults),indent=2)));layout.addWidget(fill)
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(self.accept_checked);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
     def accept_checked(self):
@@ -45,10 +55,15 @@ class GenerationDialog(QDialog):
         self.recipe=copy.deepcopy(recipe);self.paths=list(paths);self.pool=QThreadPool(self);self.pool.setMaxThreadCount(1);self.task=None;self.cancel=threading.Event();self.samples=[]
         layout=QVBoxLayout(self);form=QFormLayout();layout.addLayout(form)
         self.seed=QSpinBox();self.seed.setRange(0,2147483647);self.seed.setValue(42);form.addRow('Seed',self.seed)
+        new_seed=QPushButton('New seed — get a different reproducible batch');new_seed.clicked.connect(lambda:self.seed.setValue(secrets.randbelow(2147483648)));form.addRow(new_seed)
+        seed_help=QLabel('The same seed reproduces a batch; each variant still samples separately. A seed cannot add variation to fixed settings.');seed_help.setWordWrap(True);form.addRow(seed_help)
         self.count=QSpinBox();self.count.setRange(1,1000);self.count.setValue(5);form.addRow('Variants per training image',self.count)
         self.visibility=QDoubleSpinBox();self.visibility.setRange(0,1);self.visibility.setSingleStep(.1);form.addRow('Minimum retained box visibility',self.visibility)
         self.manifest=QLineEdit();row=QHBoxLayout();row.addWidget(self.manifest);browse=QPushButton('Browse manifest');row.addWidget(browse);browse.clicked.connect(self.pick_manifest);form.addRow('Paired manifest (optional)',row)
         self.output=QLineEdit('generated/run-1');form.addRow('New output folder',self.output)
+        rules=variation_summary(self.recipe)
+        summary=QLabel('Active variation:\n'+('\n'.join(rules) if rules else 'NONE — outputs per source will be identical. Close this dialog and configure Random settings for a step.'))
+        summary.setWordWrap(True);form.addRow(summary)
         layout.addWidget(QLabel('Without a manifest, loaded gallery images are treated as unlabeled training sources.\nWith a manifest, only train records are generated; cross-split duplicate content is rejected.'))
         buttons=QHBoxLayout();layout.addLayout(buttons)
         self.preview_button=QPushButton('Sample contact sheet (up to 9)');self.preview_button.clicked.connect(self.preview);buttons.addWidget(self.preview_button)
@@ -86,16 +101,20 @@ class GenerationDialog(QDialog):
                     if self.cancel.is_set():raise InterruptedError('Preview cancelled')
                     resolved=sample(recipe,seed,record['id'],n);result=engine.run(source,resolved,retain_intermediates=False)[0]
                     scale=min(1,300/max(result.shape[:2]));images.append(cv2.resize(result,(max(1,round(result.shape[1]*scale)),max(1,round(result.shape[0]*scale)))));samples.append(resolved);progress(n+1,count)
-                return contact_sheet(images),samples
+                unique=len({(im.shape,im.tobytes()) for im in images})
+                return contact_sheet(images),samples,unique
             def show(result):
                 from workbench import qimage
-                image,self.samples=result;self.sheet.setPixmap(QPixmap.fromImage(qimage(image)));self.message.setText('Sampled settings frozen until you sample again. Contact sheet uses the first source at original resolution.')
+                image,self.samples,unique=result;self.sheet.setPixmap(QPixmap.fromImage(qimage(image)));self.message.setText(f'{unique} distinct preview thumbnails out of {len(self.samples)}. Sampled settings stay frozen until you sample again. Repeated pixels can occur even with random parameters.')
             self.start(work,show)
         except Exception as exc:self.failed(str(exc))
     def generate(self):
         try:
             records=self.sources();recipe=copy.deepcopy(self.recipe);out=self.output.text();variants=self.count.value();seed=self.seed.value();visibility=self.visibility.value()
-            self.start(lambda progress:generate(records,recipe,out,variants,seed,visibility,progress,self.cancel.is_set),lambda result:self.message.setText(f"Finished: {result['generated']} images. Replay and target records saved."))
+            if variants>1 and not variation_summary(recipe):
+                answer=QMessageBox.question(self,'No random variation configured','All settings are fixed. This will make repeated copies for each source. Continue anyway?',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
+                if answer!=QMessageBox.StandardButton.Yes:return
+            self.start(lambda progress:generate(records,recipe,out,variants,seed,visibility,progress,self.cancel.is_set),lambda result:self.message.setText(f"Finished: {result['generated']} images; {result['unique_images']} distinct within their sources, {result['duplicate_images']} repeats. Replay and target records saved."))
         except Exception as exc:self.failed(str(exc))
     def bundle(self):
         path,_=QFileDialog.getSaveFileName(self,'Export portable generation bundle','generation.zip','ZIP (*.zip)')

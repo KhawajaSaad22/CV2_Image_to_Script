@@ -80,7 +80,7 @@ pixel for pixel. Install matching versions for cross-machine reproducibility.
 
 ## Operations and semantics
 
-Resize (explicit width/height), bounded crop, fixed-canvas rotation, flip, grayscale,
+Resize (explicit width/height), bounded crop, expandable-canvas rotation, flip, grayscale,
 brightness/contrast, gamma, Gaussian/median blur, fixed/Otsu/adaptive thresholding,
 Canny, erosion/dilation/opening/closing, histogram equalization, and CLAHE.
 
@@ -92,7 +92,11 @@ Canny, erosion/dilation/opening/closing, histogram equalization, and CLAHE.
   than silently normalized on load/export.
 - Crop bounds must fit the image at that stage. Different source sizes may require
   resizing first. Resize uses explicit dimensions and can change aspect ratio.
-- Rotation preserves the canvas; corners may be clipped. Borders are selectable.
+- Rotation defaults to `canvas: expand`, keeping the rotated image in a resized frame.
+  At −90°, 1920×1080 becomes 1080×1920, with exact pixel preservation for quarter turns.
+  Choose `canvas: keep` for intentional fixed-frame clipping. Positive angles are
+  counterclockwise. Old pipeline JSON without a canvas setting now opens in expand mode;
+  historical replay records retain keep mode so their saved outputs remain reproducible.
 - PNG alpha is composited over white. 16-bit/float inputs are rejected; EXIF orientation
   is not applied automatically. This release is not a medical/raw-image workbench.
 
@@ -165,6 +169,30 @@ to nine thumbnails. Samples remain fixed until you click sample again. Export th
 first resolved sample as JSON or standalone Python, or export the entire random recipe
 as a portable generation bundle.
 
+### Why generated images can repeat
+
+One seed reproduces the whole batch; the sampler also includes source ID, variant
+index, operation ID, and parameter name, so each variant samples separately. Changing
+the seed selects another reproducible batch. **New seed** does this explicitly.
+
+Fixed sliders do not automatically define random ranges. Open a step's **Random
+settings**, insert example ranges or enter your own, and apply them. The generation
+dialog now lists active variation rules and warns before making repeated variants
+when none are configured. A range with equal endpoints, a single choice, or a kernel
+range containing only one odd value is effectively fixed.
+
+Even valid random rules can repeat outputs: probability may skip a filter, several
+samples may choose the same discrete value, or the operation may not change that image.
+The app does not force uniqueness or change the requested distribution. Contact sheets
+report distinct thumbnails; generation reports exact per-source pixel duplicates in
+`run.json` and flags repeated variants in the output manifest.
+
+Each operation now includes a plain-language explanation and implementation reference
+in the settings panel. CLAHE means **Contrast Limited Adaptive Histogram Equalization**:
+it adjusts local contrast, useful for uneven illumination. Its `clip` setting limits
+enhancement; `tiles` sets grid count per axis, not a tile's pixel size. Strong settings
+can amplify noise. Color processing uses Lab lightness via `cv2.createCLAHE`.
+
 The generation dialog uses gallery images as unlabeled training sources, or reads an
 optional paired manifest. Choose a NEW output folder and click **Generate dataset**.
 Generation runs off the UI thread; cancellation is checked between images. Closing an
@@ -204,7 +232,8 @@ uses absolute image paths as IDs.
   Rotated-box envelopes are approximate supervision and should be reviewed.
 - Keypoints use pixel-center coordinates and visibility 0/1/2. Outside points are retained
   with visibility 0. Resize uses half-pixel center mapping; boxes use edge mapping.
-- Rotation remains fixed-canvas. Reflect borders are rejected when annotations are
+- Rotation can expand or retain the canvas; paired targets use the same geometry.
+  Reflect borders are rejected when annotations are
   present because reflected objects would lack corresponding labels. Use black/white.
 - Only resize/crop/rotate/flip change annotation geometry. Edge/threshold/morphology
   preprocessing can change what is visible without changing the underlying labels;

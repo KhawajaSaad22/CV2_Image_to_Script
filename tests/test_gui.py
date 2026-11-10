@@ -91,5 +91,18 @@ class GuiTests(unittest.TestCase):
         dialog.output.setText(str(self.root/'generated'));dialog.generate();wait()
         status=json.loads((self.root/'generated'/'run.json').read_text());self.assertEqual(status['generated'],2)
         dialog.close();dialog.deleteLater()
+    def test_settings_include_help(self):
+        from PySide6.QtWidgets import QLabel
+        self.add('clahe')
+        text=' '.join(w.text() for w in self.window.settings.findChildren(QLabel))
+        self.assertIn('Contrast Limited Adaptive Histogram Equalization',text);self.assertIn('cv2.createCLAHE',text)
+    def test_fixed_generation_requires_confirmation(self):
+        from generation_ui import GenerationDialog
+        from PySide6.QtWidgets import QMessageBox
+        dialog=GenerationDialog({'version':1,'steps':[engine.new_step('grayscale')]},[str(self.root/'one.png')],self.window)
+        dialog.output.setText(str(self.root/'no-duplicates'))
+        with patch('generation_ui.QMessageBox.question',return_value=QMessageBox.StandardButton.No) as question:
+            dialog.generate();question.assert_called_once()
+        self.assertIsNone(dialog.task);self.assertFalse((self.root/'no-duplicates').exists());dialog.close();dialog.deleteLater()
 
 if __name__=='__main__':unittest.main()

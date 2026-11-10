@@ -59,7 +59,7 @@ def geometry(kind,p,w,h):
         nw,nh=w,h; sx=-1 if p['direction'] in ('horizontal','both') else 1; sy=-1 if p['direction'] in ('vertical','both') else 1
         center=np.array([[sx,0,w-1 if sx<0 else 0],[0,sy,h-1 if sy<0 else 0],[0,0,1]],float)
     else:
-        nw,nh=w,h; center=np.eye(3); center[:2]=cv2.getRotationMatrix2D(((w-1)/2,(h-1)/2),p['angle'],1)
+        matrix,nw,nh=engine.rotation_geometry(w,h,p);center=np.eye(3);center[:2]=matrix
     plus=np.array([[1,0,.5],[0,1,.5],[0,0,1.]])
     minus=np.array([[1,0,-.5],[0,1,-.5],[0,0,1.]])
     return center,plus@center@minus,nw,nh
@@ -98,3 +98,18 @@ def run_paired(image,pipeline,targets=None,min_visibility=0):
                 if not (0<=point['x']<nw and 0<=point['y']<nh):point['visibility']=0
         current=result
     return current,targets,dropped
+
+def variation_summary(recipe):
+    descriptions=[]
+    for step in engine.validate(recipe)['steps']:
+        if not step['enabled']:continue
+        settings=step.get('random',{});probability=settings.get('probability',1)
+        if probability==0:continue
+        if probability<1:descriptions.append(step['type']+': apply probability '+str(probability))
+        for key,rule in settings.get('params',{}).items():
+            if 'choices' in rule:variable=len({json.dumps(v,sort_keys=True) for v in rule['choices']})>1
+            elif key in ('kernel','block'):
+                lo=rule['min']+int(rule['min']%2==0);variable=(rule['max']-lo)//2+1>1
+            else:variable=rule['min']<rule['max']
+            if variable:descriptions.append(step['type']+'.'+key+': '+json.dumps(rule))
+    return descriptions

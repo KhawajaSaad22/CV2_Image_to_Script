@@ -218,6 +218,10 @@ class Workbench(QMainWindow):
         i=self.steps.currentRow()
         if i<0:return
         step=self.document.pipeline['steps'][i]
+        from operation_help import HELP,PARAMETER_HELP
+        title,description,function=HELP[step['type']]
+        info=QLabel(title+'\n\n'+description+'\n\nUses: '+function+'\n\nThese controls set fixed values. Use Random settings to define dataset ranges.')
+        info.setWordWrap(True);info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse);self.form.addRow(info)
         for key,spec in engine.OPERATIONS[step['type']].items():
             if 'choices' in spec or key in ('kernel','block'):
                 values=spec['choices'] if 'choices' in spec else [str(n) for n in range(spec['minimum'],spec['maximum']+1,2)]
@@ -234,6 +238,7 @@ class Workbench(QMainWindow):
                     slider.valueChanged.connect(lambda value,f=field,s=spec,factor=factor:f.setValue(int(value) if s['integer'] else value/factor))
                     field.valueChanged.connect(lambda value,s=slider,factor=factor:s.setValue(round(value*factor))); line.addWidget(slider)
                 self.form.addRow(key,container)
+            field.setToolTip(PARAMETER_HELP.get(key,'Parameter used by '+function))
     def change_parameter(self,key,value):
         i=self.steps.currentRow()
         if i<0:return
