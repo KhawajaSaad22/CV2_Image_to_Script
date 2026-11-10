@@ -72,6 +72,33 @@ def validate(pipeline):
                 if not spec['minimum']<=value<=spec['maximum']: raise ValueError('Out of range: '+key)
                 if key in ('kernel','block') and value%2!=1: raise ValueError(key+' must be odd')
         if kind=='canny' and params['low']>params['high']: raise ValueError('Canny low must not exceed high')
+        if 'random' in step:
+            settings=step['random']
+            if not isinstance(settings,dict) or set(settings)-{'probability','params'}: raise ValueError('Invalid random settings')
+            probability=settings.get('probability',1)
+            if type(probability) not in (int,float) or not math.isfinite(probability) or not 0<=probability<=1: raise ValueError('Probability must be between 0 and 1')
+            rules=settings.get('params',{})
+            if not isinstance(rules,dict) or set(rules)-set(OPERATIONS[kind]): raise ValueError('Unknown randomized parameter')
+            for key,rule in rules.items():
+                if not isinstance(rule,dict): raise ValueError('Random rule must be an object')
+                spec=OPERATIONS[kind][key]
+                if set(rule)=={'choices'}:
+                    values=rule['choices']
+                    if not isinstance(values,list) or not values or len(values)>1000: raise ValueError('Provide 1–1000 choices')
+                elif set(rule)=={'min','max'} and 'choices' not in spec:
+                    lo,hi=rule['min'],rule['max']
+                    if type(lo) not in (int,float) or type(hi) not in (int,float) or not math.isfinite(lo) or not math.isfinite(hi) or lo>hi: raise ValueError('Invalid random range')
+                    if spec['integer'] and (type(lo)!=int or type(hi)!=int): raise ValueError('Integer ranges require integer endpoints')
+                    values=[lo,hi]
+                    if key in ('kernel','block') and not any(n%2 for n in range(lo,hi+1)): raise ValueError('Range has no odd values')
+                else: raise ValueError('Use choices or min/max for each random rule')
+                for value in values:
+                    if 'choices' in spec:
+                        if value not in spec['choices']: raise ValueError('Unsupported randomized choice')
+                    else:
+                        if type(value) not in (int,float) or not math.isfinite(value) or not spec['minimum']<=value<=spec['maximum']: raise ValueError('Random value out of bounds')
+                        if spec['integer'] and type(value)!=int: raise ValueError('Expected integer random value')
+                        if 'choices' in rule and key in ('kernel','block') and value%2!=1: raise ValueError('Kernel choices must be odd')
     return copy.deepcopy(pipeline)
 
 

@@ -3,7 +3,7 @@
 A local desktop editor for building image-preprocessing pipelines, inspecting live
 intermediate results, and exporting standalone OpenCV/NumPy code.
 
-## Implemented: Phases 1–3
+## Implemented: Phases 1–6
 
 - Load several representative images and switch between them in a gallery.
 - Add, reorder, disable, duplicate, and remove processing operations.
@@ -15,6 +15,12 @@ intermediate results, and exporting standalone OpenCV/NumPy code.
 - Save/reopen versioned pipeline JSON.
 - Export a self-contained Python script for one image or a recursive folder batch.
 - Save the exact processed image as PNG.
+- Randomize parameter ranges/choices and per-operation probabilities with stable seeds.
+- Inspect frozen sampled contact sheets and export a particular sampled pipeline.
+- Generate training datasets with manifests, replay records, progress, and cancellation.
+- Transform paired class-ID masks, boxes, and keypoints alongside geometric image operations.
+- Export a portable dataset-generation ZIP containing code, recipe, and requirements.
+- Build a portable Windows application and per-user installer using GitHub Actions.
 
 The original `cv2_image_app.py` is preserved as a legacy PyQt5 prototype; the new
 entry point is `workbench.py`, using PySide6. The legacy prototype is not part of the
@@ -44,7 +50,7 @@ recommended. The app requires no model download, paid API, or GPU.
 4. Select a step to edit it; check/uncheck to enable/disable it. Use Up/Down to reorder.
 5. Use **Inspect stage** below the canvases to view intermediate results.
 6. Enable **Exact full resolution** before judging the precise final output.
-7. Save your JSON setup and choose **Export Python**.
+7. Save your JSON setup and choose **Export fixed Python**.
 
 Mouse wheel zooms; drag pans; **Fit both views** resets the canvases. Keyboard shortcuts:
 Ctrl+O adds images, Ctrl+S saves pipeline JSON, Ctrl+Z/Ctrl+Y undo/redo. Intermediate
@@ -133,19 +139,140 @@ docker run --rm -v /absolute/path/to/files:/work cv2-workbench:test python /work
 Linux bind mounts must be writable by container UID 10001. Docker does not provide a
 desktop display here; no X11/VNC service or browser interface is bundled.
 
-## Later phases
+## Randomization and dataset generation
 
-Randomized parameter ranges, probabilities, sampled contact sheets, dataset generation,
-per-sample replay manifests, and paired mask/box/keypoint transforms are **not** included
-in Phases 1–3. Also deferred: pixel painting, Photoshop-style compositing layers,
-drag-and-drop reordering, split/swipe comparison, video/webcam inputs, installer packaging,
-and multi-library adapters. The operation engine is structured to support later additions.
+Select an operation, then **Random settings for selected step**. Set an application
+probability and parameter rules. The current functional dialog uses validated JSON;
+visual redesign and more polished range controls are a separate pass. Example rules
+for brightness/contrast:
+
+```json
+{"brightness":{"min":-25,"max":25},"contrast":{"min":0.8,"max":1.2}}
+```
+
+For a blur kernel use `{"kernel":{"choices":[3,5,7]}}`. Numeric ranges are uniform;
+integer upper bounds are inclusive, continuous samples use NumPy uniform, and kernel
+ranges select only valid odd values. Categorical settings require choices. Probability
+zero disables a step in every sample; a disabled pipeline step stays disabled. Random
+rules must respect parameter bounds and joint constraints. For example, overlapping
+Canny threshold ranges can produce invalid pairs and fail a generation run; they are
+not silently swapped or repeatedly resampled.
+
+The main editing canvas and **Export fixed Python** continue to use fixed parameter
+values. Open **Dataset / random preview**, choose a seed and variant count, and sample
+a contact sheet. It processes the first source at original resolution and displays up
+to nine thumbnails. Samples remain fixed until you click sample again. Export the
+first resolved sample as JSON or standalone Python, or export the entire random recipe
+as a portable generation bundle.
+
+The generation dialog uses gallery images as unlabeled training sources, or reads an
+optional paired manifest. Choose a NEW output folder and click **Generate dataset**.
+Generation runs off the UI thread; cancellation is checked between images. Closing an
+active dialog first requests cancellation. OpenCV calls already running finish first.
+Already generated outputs are kept on cancellation/failure, with status and error in
+`run.json`; do not interpret partial output as a complete dataset.
+
+### Manifest and paired annotations
+
+Input is a JSON list, paths relative to that manifest:
+
+```json
+[
+  {
+    "id":"part-001", "image":"images/part.png", "split":"train",
+    "mask":"masks/part.png",
+    "boxes":[{"xyxy":[10,20,80,100],"label":"part"}],
+    "keypoints":[{"x":25,"y":40,"visibility":2,"label":"corner"}]
+  }
+]
+```
+
+Only `image` and unique nonempty `id` are required; split defaults to train. Optional
+splits are train, validation, and test. The manifest loader detects exact image-content
+overlap across splits; CLI/UI select only training records for generation. Group related
+source photographs by object/session before splitting: exact hashes cannot detect
+near-duplicates. Changing file order does not change a source's sampled parameters.
+For portable seeds across computers, assign stable manifest IDs; gallery-only mode
+uses absolute image paths as IDs.
+
+- Masks are single-channel uint8 or uint16 PNG class IDs matching image dimensions;
+  geometry uses nearest-neighbor interpolation. Photometric changes never modify masks.
+  Newly exposed rotation pixels use class ID 0, so reserve zero for background.
+- Boxes use pixel, half-open `[x1,y1,x2,y2]` edges. Geometry transforms their corners,
+  returns axis-aligned envelopes, clips bounds, and drops zero-area or insufficiently
+  visible boxes. The visibility filter uses clipped envelope area, not polygon area.
+  Rotated-box envelopes are approximate supervision and should be reviewed.
+- Keypoints use pixel-center coordinates and visibility 0/1/2. Outside points are retained
+  with visibility 0. Resize uses half-pixel center mapping; boxes use edge mapping.
+- Rotation remains fixed-canvas. Reflect borders are rejected when annotations are
+  present because reflected objects would lack corresponding labels. Use black/white.
+- Only resize/crop/rotate/flip change annotation geometry. Edge/threshold/morphology
+  preprocessing can change what is visible without changing the underlying labels;
+  check that your pipeline remains appropriate for the target task.
+
+This release uses the canonical manifest format above; direct COCO/YOLO file adapters,
+polygons, instance-ID renumbering, and annotation painting are not included.
+
+### Command-line generation and replay
+
+```sh
+python dataset.py generate inputs.json --recipe examples/random_preprocessing.json --output generated/run-1 --variants 5 --seed 42
+python dataset.py replay generated/run-1/replay.jsonl --row 0 --output replay.png
+```
+
+Outputs include PNG images/masks, `manifest.json`, `replay.jsonl`, and `run.json`.
+Replay records contain the resolved pipeline, actual sampled values, input hashes,
+source annotations, dropped boxes, output hash, and dependency versions. Replay uses
+the saved resolved pipeline rather than sampling again, refuses changed sources, and
+reports whether PNG encoding matches. Different dependency versions can change encoding
+or pixels; keep the recorded versions for exact reproduction. Existing output folders
+and replay companion files are never overwritten. Replay records contain local source
+paths—keep them with private datasets rather than committing them to a public repository.
+
+The **Replay generated record** button selects a zero-based record row and writes the
+image, optional mask, and target JSON. Replay requires the original sources at their
+recorded locations. Portable generation ZIPs contain code/configuration only, no images
+or absolute input paths; after extraction run `python generate.py generate inputs.json
+--output generated --variants 5 --seed 42` from that folder.
+
+## Windows packaging and profiling
+
+After a successful Actions run, download **CV2Workbench-Windows** from its artifacts.
+It contains a portable `dist/CV2Workbench/` folder and
+`installer-output/CV2Workbench-Setup.exe`. The installer installs for the current user
+without requiring administrator rights. Builds are unsigned. The packaged application
+includes runtime source resources so both export modes continue to work without Python
+or this repository installed. Exported scripts/bundles still require a Python environment.
+
+To build locally on Windows:
+
+```powershell
+python -m pip install pyinstaller
+python -m PyInstaller --noconfirm workbench.spec
+.\dist\CV2Workbench\CV2Workbench.exe --self-test
+```
+
+Compile `installer.iss` with Inno Setup to create the installer. CI builds it and checks
+the packaged runtime before uploading the artifact. The installer adds shortcuts and
+an uninstaller; datasets are saved to locations you choose, not bundled into the app.
+
+```sh
+python tools/profile_pipeline.py data/demo/example-1.png examples/edge_inspection.json --runs 10 --output artifacts/profile.json
+```
+
+Profiling reports warm CPU execution timings without prefix caching, input shape,
+platform, and OpenCV version. It does not measure peak memory. UI redesign, painting,
+compositing, drag-and-drop reordering, swipe comparison, webcam/video inputs, additional
+library adapters, and broader real-dataset validation remain future work.
 
 ## Project layout
 
 - `engine.py`: validation, operations, execution, image I/O, and export CLI runtime.
 - `project.py`: configuration history and standalone-script generation.
 - `workbench.py`: desktop editor, controls, canvases, and preview worker.
+- `augmentation.py`, `dataset.py`: deterministic sampling, paired transforms, generation/replay.
+- `generation_ui.py`: random settings, contact sheets, and cancellable generation dialog.
+- `workbench.spec`, `installer.iss`: portable Windows application and installer build.
 - `tests/`: engine/export and offscreen desktop tests.
 - `examples/`: portable pipeline JSON.
 - `cv2_image_app.py`: preserved original prototype.

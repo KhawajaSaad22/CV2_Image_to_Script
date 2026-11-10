@@ -6,3 +6,7 @@ data/
 artifacts/
 exported_script.py
 processed.png
+generated/
+build/
+dist/
+installer-output/

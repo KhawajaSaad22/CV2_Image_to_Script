@@ -18,6 +18,29 @@ jobs:
       - run: python -m unittest discover -v
         env:
           QT_QPA_PLATFORM: offscreen
+      - run: python -m pip install pyinstaller
+      - run: python -m PyInstaller --noconfirm workbench.spec
+      - name: Check packaged export runtime
+        run: .\dist\CV2Workbench\CV2Workbench.exe --self-test
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $compiler = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $compiler) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $compiler = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe" | Select-Object -First 1 -ExpandProperty FullName
+          }
+          & $compiler installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CV2Workbench-Windows
+          path: |
+            dist/CV2Workbench/
+            installer-output/CV2Workbench-Setup.exe
   linux-container:
     runs-on: ubuntu-latest
     steps:

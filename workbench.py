@@ -87,9 +87,12 @@ class Workbench(QMainWindow):
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(160); self.timer.timeout.connect(self.start_preview)
         root=QWidget(); self.setCentralWidget(root); main=QVBoxLayout(root)
         toolbar=QHBoxLayout(); main.addLayout(toolbar)
-        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export Python',self.export),('Save processed PNG',self.save_output),('Undo',self.undo),('Redo',self.redo)]:
+        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export fixed Python',self.export),('Save processed PNG',self.save_output),('Undo',self.undo),('Redo',self.redo)]:
             button=QPushButton(text); button.clicked.connect(callback); toolbar.addWidget(button)
         self.exact=QCheckBox('Exact full resolution'); self.exact.toggled.connect(self.request_preview); toolbar.addWidget(self.exact)
+        random_bar=QHBoxLayout();main.addLayout(random_bar)
+        for text,callback in [('Random settings for selected step',self.random_settings),('Dataset / random preview',self.generation),('Replay generated record',self.replay_generated)]:
+            button=QPushButton(text);button.clicked.connect(callback);random_bar.addWidget(button)
         body=QSplitter(); main.addWidget(body,1)
         self.gallery=QListWidget(); self.gallery.setMaximumWidth(220); self.gallery.currentRowChanged.connect(self.select_image); body.addWidget(self.gallery)
         middle=QWidget(); layout=QVBoxLayout(middle); canvases=QSplitter()
@@ -118,6 +121,29 @@ class Workbench(QMainWindow):
         self.setStyleSheet('QMainWindow {background:#171c24;} QWidget {font-size:12px;} QPushButton {padding:6px;} QListWidget {min-height:100px;}')
 
     def error(self,message): self.statusBar().showMessage(message); self.metadata.setText('Error: '+message)
+    def random_settings(self):
+        from generation_ui import RandomSettings
+        i=self.steps.currentRow()
+        if i<0:self.error('Select a pipeline step first');return
+        dialog=RandomSettings(self.document.pipeline['steps'][i],self)
+        if dialog.exec():
+            p=copy.deepcopy(self.document.pipeline);p['steps'][i]=dialog.step;self.commit(p,i)
+    def generation(self):
+        from generation_ui import GenerationDialog
+        dialog=GenerationDialog(self.document.pipeline,self.paths,self);dialog.exec()
+    def replay_generated(self):
+        from dataset import replay_record
+        from PySide6.QtWidgets import QInputDialog
+        path,_=QFileDialog.getOpenFileName(self,'Replay records','','JSON lines (*.jsonl)')
+        if not path:return
+        try:
+            records=[json.loads(line) for line in Path(path).read_text(encoding='utf-8').splitlines() if line.strip()]
+            if not records:raise ValueError('No replay records')
+            row,ok=QInputDialog.getInt(self,'Replay sample','Zero-based record row',0,0,len(records)-1)
+            if not ok:return
+            out,_=QFileDialog.getSaveFileName(self,'Replay output','replay.png','PNG (*.png)')
+            if out:self.statusBar().showMessage(str(replay_record(records[row],out)))
+        except Exception as exc:QMessageBox.warning(self,'Replay failed',str(exc))
     def open_images(self):
         paths,_=QFileDialog.getOpenFileNames(self,'Add representative images','','Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp)')
         if paths:self.load_paths(paths)
@@ -241,4 +267,7 @@ class Workbench(QMainWindow):
     def closeEvent(self,event):self.cancel.set(); self.timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 if __name__=='__main__':
+    if '--self-test' in sys.argv:
+        from packaging_check import main
+        main();sys.exit(0)
     app=QApplication(sys.argv); app.setStyle('Fusion'); window=Workbench(); window.show(); sys.exit(app.exec())

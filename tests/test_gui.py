@@ -67,5 +67,29 @@ class GuiTests(unittest.TestCase):
         self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['type'],'gamma')
         with patch('workbench.QFileDialog.getSaveFileName',return_value=(script,'')):self.window.export()
         self.assertIn('run_cli(PIPELINE)',Path(script).read_text())
+    def test_random_settings_validation(self):
+        from generation_ui import RandomSettings
+        import json
+        dialog=RandomSettings(engine.new_step('gaussian_blur'),self.window)
+        dialog.editor.setPlainText(json.dumps({'kernel':{'choices':[2,4]}}));dialog.accept_checked()
+        self.assertIn('odd',dialog.error.text())
+        dialog.editor.setPlainText(json.dumps({'kernel':{'choices':[3,5,7]}}));dialog.probability.setValue(.4);dialog.accept_checked()
+        self.assertEqual(dialog.step['random']['probability'],.4);dialog.deleteLater()
+    def test_generation_preview_and_dataset(self):
+        from generation_ui import GenerationDialog
+        import json
+        recipe={'version':1,'steps':[engine.new_step('brightness_contrast')]}
+        recipe['steps'][0]['random']={'params':{'brightness':{'min':-20,'max':20}}}
+        dialog=GenerationDialog(recipe,[str(self.root/'one.png')],self.window);dialog.count.setValue(2)
+        def wait():
+            for _ in range(500):
+                self.app.processEvents();QTest.qWait(10)
+                if dialog.task is None:return
+            self.fail('Generation worker timeout')
+        dialog.preview();wait();self.assertEqual(len(dialog.samples),2);self.assertFalse(dialog.sheet.pixmap().isNull())
+        sampled=copy.deepcopy(dialog.samples);dialog.preview();wait();self.assertEqual(dialog.samples,sampled)
+        dialog.output.setText(str(self.root/'generated'));dialog.generate();wait()
+        status=json.loads((self.root/'generated'/'run.json').read_text());self.assertEqual(status['generated'],2)
+        dialog.close();dialog.deleteLater()
 
 if __name__=='__main__':unittest.main()
