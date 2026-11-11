@@ -43,14 +43,14 @@ recommended. The app requires no model download, paid API, or GPU.
 
 ## First workflow
 
-1. Click **Add images** and select your images or the generated `data/demo/*.png` files.
+1. Click **Add images** and select my images or the generated `data/demo/*.png` files.
 2. Add Gaussian blur, grayscale, and Canny from the operation selector—or open
    `examples/edge_inspection.json`.
 3. Adjust parameters. Changes preview automatically after a short debounce.
 4. Select a step to edit it; check/uncheck to enable/disable it. Use Up/Down to reorder.
 5. Use **Inspect stage** below the canvases to view intermediate results.
 6. Enable **Exact full resolution** before judging the precise final output.
-7. Save your JSON setup and choose **Export fixed Python**.
+7. Save my JSON setup and choose **Export fixed Python**.
 
 Mouse wheel zooms; drag pans; **Fit both views** resets the canvases. Keyboard shortcuts:
 Ctrl+O adds images, Ctrl+S saves pipeline JSON, Ctrl+Z/Ctrl+Y undo/redo. Intermediate
@@ -134,7 +134,7 @@ docker build -t cv2-workbench:test .
 docker run --rm cv2-workbench:test
 ```
 
-For headless exports, mount your files under `/work` and override the command, e.g.:
+For headless exports, mount my files under `/work` and override the command, e.g.:
 
 ```sh
 docker run --rm -v /absolute/path/to/files:/work cv2-workbench:test python /work/process_images.py /work/input.png /work/output.png
@@ -176,7 +176,7 @@ index, operation ID, and parameter name, so each variant samples separately. Cha
 the seed selects another reproducible batch. **New seed** does this explicitly.
 
 Fixed sliders do not automatically define random ranges. Open a step's **Random
-settings**, insert example ranges or enter your own, and apply them. The generation
+settings**, insert example ranges or enter my own, and apply them. The generation
 dialog now lists active variation rules and warns before making repeated variants
 when none are configured. A range with equal endpoints, a single choice, or a kernel
 range containing only one odd value is effectively fixed.
@@ -237,7 +237,7 @@ uses absolute image paths as IDs.
   present because reflected objects would lack corresponding labels. Use black/white.
 - Only resize/crop/rotate/flip change annotation geometry. Edge/threshold/morphology
   preprocessing can change what is visible without changing the underlying labels;
-  check that your pipeline remains appropriate for the target task.
+  check that my pipeline remains appropriate for the target task.
 
 This release uses the canonical manifest format above; direct COCO/YOLO file adapters,
 polygons, instance-ID renumbering, and annotation painting are not included.
