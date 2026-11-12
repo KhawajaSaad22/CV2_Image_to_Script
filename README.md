@@ -1,5 +1,10 @@
 # CV2 Image to Script — Pipeline Workbench
 
+Profiling update: `tools/profile_pipeline.py` now records baseline and sampled peak
+process RSS in addition to warm latency. Sampling starts before image loading and
+runs every 10 ms; brief peaks can be missed. Values include process overhead and
+do not measure GPU memory. A subprocess regression test checks the report fields.
+
 A local desktop editor for building image-preprocessing pipelines, inspecting live
 intermediate results, and exporting standalone OpenCV/NumPy code.
 
@@ -301,7 +306,7 @@ python tools/profile_pipeline.py data/demo/example-1.png examples/edge_inspectio
 ```
 
 Profiling reports warm CPU execution timings without prefix caching, input shape,
-platform, and OpenCV version. It does not measure peak memory. UI redesign, painting,
+platform, OpenCV version, and sampled process RSS (brief peaks may be missed). UI redesign, painting,
 compositing, drag-and-drop reordering, swipe comparison, webcam/video inputs, additional
 library adapters, and broader real-dataset validation remain future work.
 
