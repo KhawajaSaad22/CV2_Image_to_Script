@@ -18,13 +18,15 @@ Future items are proposals and are not included in the current application.
 
 ### 13 November 2026 — Guided settings and responsive workbench
 
+[Commit 39d56926](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/39d5692692b30eabedc2737373b277cc0e8e576b)
+
 - Added native Fixed / Range / Choices controls with a synchronized Advanced JSON
   tab. Invalid rules leave the accepted recipe unchanged; odd-kernel validation is retained.
 - High-precision range rules stay in Advanced JSON instead of being silently rounded.
 - Grouped file/export commands in File and generation/replay commands in Dataset,
   with a shorter primary toolbar.
-- Preserved zoom/pan for same-size preview updates; image changes and geometry
-  changes reset the view deliberately.
+- Preserved zoom/pan for same-size preview updates; image switches and changed
+  output dimensions reset the view deliberately.
 - Moved exact PNG saving to a background worker with copied image/recipe state.
   Closing is deferred while an exact save is pending, so queued saves are not dropped.
 - Added regression coverage for guided/JSON rules, stable zoom and recipe snapshots.
