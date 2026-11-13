@@ -75,6 +75,43 @@ class GuiTests(unittest.TestCase):
         self.assertIn('odd',dialog.error.text())
         dialog.editor.setPlainText(json.dumps({'kernel':{'choices':[3,5,7]}}));dialog.probability.setValue(.4);dialog.accept_checked()
         self.assertEqual(dialog.step['random']['probability'],.4);dialog.deleteLater()
+    def test_guided_random_settings_roundtrip_and_validation(self):
+        from generation_ui import RandomSettings
+        import json
+        dialog=RandomSettings(engine.new_step('gaussian_blur'),self.window)
+        mode,low,high,choices,spec=dialog.rule_widgets['kernel']
+        mode.setCurrentText('Choices');choices.setText('3, 5, 7')
+        self.assertEqual(json.loads(dialog.editor.toPlainText()),{'kernel':{'choices':[3,5,7]}})
+        dialog.accept_checked();self.assertEqual(dialog.step['random']['params']['kernel']['choices'],[3,5,7])
+        dialog.deleteLater()
+        other=RandomSettings(engine.new_step('gamma'),self.window)
+        mode,low,high,choices,spec=other.rule_widgets['gamma'];mode.setCurrentText('Range');low.setValue(2);high.setValue(1)
+        other.accept_checked();self.assertTrue(other.error.text());self.assertNotIn('random',other.step)
+        other.deleteLater()
+    def test_preview_preserves_viewport_zoom(self):
+        self.window.after.scale(2,2);scale=self.window.after.transform().m11()
+        self.add('brightness_contrast');self.window.change_parameter('brightness',15);self.wait_preview()
+        self.assertAlmostEqual(self.window.after.transform().m11(),scale)
+        self.window.gallery.setCurrentRow(1);self.wait_preview()
+        self.assertNotAlmostEqual(self.window.after.transform().m11(),scale)
+    def test_advanced_precision_is_not_silently_quantized(self):
+        from generation_ui import RandomSettings
+        step=engine.new_step('gamma');rules={'gamma':{'min':.812345678,'max':1.123456789}}
+        step['random']={'params':rules}
+        dialog=RandomSettings(step,self.window)
+        self.assertEqual(dialog.tabs.currentIndex(),1)
+        dialog.accept_checked();self.assertEqual(dialog.step['random']['params'],rules)
+        dialog.deleteLater()
+    def test_background_exact_save_uses_recipe_snapshot(self):
+        self.add('brightness_contrast');self.window.change_parameter('brightness',10);self.wait_preview()
+        expected=engine.run(self.image,self.window.document.pipeline)[0];path=str(self.root/'saved.png')
+        with patch('workbench.QFileDialog.getSaveFileName',return_value=(path,'')):
+            self.window.save_output()
+        self.window.change_parameter('brightness',60)
+        for _ in range(500):
+            self.app.processEvents();QTest.qWait(10)
+            if not self.window.save_jobs:break
+        self.assertFalse(self.window.save_jobs);np.testing.assert_array_equal(engine.read_image(path),expected)
     def test_generation_preview_and_dataset(self):
         from generation_ui import GenerationDialog
         import json

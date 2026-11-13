@@ -1,4 +1,4 @@
-"""Functional generation controls; visual redesign is intentionally deferred."""
+"""Guided random controls and asynchronous dataset generation."""
 import copy
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ import cv2
 from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,QDoubleSpinBox,
- QSpinBox,QPlainTextEdit,QDialogButtonBox,QFileDialog,QLineEdit,QProgressBar,QScrollArea,QMessageBox)
+ QSpinBox,QPlainTextEdit,QDialogButtonBox,QFileDialog,QLineEdit,QProgressBar,QScrollArea,QMessageBox,QTabWidget,QWidget,QComboBox)
 import engine
 from augmentation import sample,variation_summary
 from dataset import contact_sheet,generate,read_manifest
@@ -19,8 +19,14 @@ class RandomSettings(QDialog):
         super().__init__(parent); self.setWindowTitle('Randomize selected operation'); self.resize(600,450); self.step=copy.deepcopy(step)
         layout=QVBoxLayout(self); self.probability=QDoubleSpinBox();self.probability.setRange(0,1);self.probability.setSingleStep(.05);self.probability.setValue(step.get('random',{}).get('probability',1))
         form=QFormLayout();form.addRow('Apply probability',self.probability);layout.addLayout(form)
-        layout.addWidget(QLabel('Parameter rules (JSON): use {"min": value, "max": value} or {"choices": [...]}.\nLeave {} to keep every parameter fixed. Numeric kernels sample odd values only.'))
-        self.editor=QPlainTextEdit();self.editor.setPlainText(json.dumps(step.get('random',{}).get('params',{}),indent=2));layout.addWidget(self.editor)
+        layout.addWidget(QLabel('Choose Fixed, Range or Choices for each parameter. Kernels sample valid odd values.'))
+        self.tabs=QTabWidget(); layout.addWidget(self.tabs)
+        guided=QWidget(); self.guided_form=QFormLayout(guided); self.tabs.addTab(guided,'Guided controls')
+        self.editor=QPlainTextEdit();self.editor.setPlainText(json.dumps(step.get('random',{}).get('params',{}),indent=2));self.tabs.addTab(self.editor,'Advanced JSON')
+        self.advanced_dirty=False; self.building=False; self.rule_widgets={}
+        self.build_guided(step.get('random',{}).get('params',{}))
+        self.editor.textChanged.connect(self.advanced_changed)
+        self.tabs.currentChanged.connect(self.tab_changed)
         defaults={key:({'choices':spec['choices']} if 'choices' in spec else {'min':step['params'][key],'max':step['params'][key]}) for key,spec in engine.OPERATIONS[step['type']].items()}
         suggestions={
             'rotate':{'angle':{'min':-15,'max':15}},
@@ -31,14 +37,93 @@ class RandomSettings(QDialog):
             'canny':{'low':{'min':30,'max':80},'high':{'min':120,'max':200}},
             'threshold':{'value':{'min':80,'max':180}},'morphology':{'kernel':{'choices':[3,5,7]}}
         }
-        fill=QPushButton('Insert example random ranges (review before applying)');fill.clicked.connect(lambda:self.editor.setPlainText(json.dumps(suggestions.get(step['type'],defaults),indent=2)));layout.addWidget(fill)
+        fill=QPushButton('Insert example random ranges (review before applying)');fill.clicked.connect(lambda:self.load_rules(suggestions.get(step['type'],defaults)));layout.addWidget(fill)
         self.error=QLabel();self.error.setWordWrap(True);layout.addWidget(self.error)
+        if self.guided_lossy:self.error.setText('This rule needs extra decimal precision. Use Advanced JSON to preserve its values.')
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(self.accept_checked);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
     def accept_checked(self):
         try:
-            self.step['random']={'probability':self.probability.value(),'params':json.loads(self.editor.toPlainText())}
-            engine.validate({'version':1,'steps':[self.step]});self.accept()
+            candidate=copy.deepcopy(self.step)
+            rules=json.loads(self.editor.toPlainText()) if self.advanced_dirty or self.guided_lossy else self.guided_rules()
+            candidate['random']={'probability':self.probability.value(),'params':rules}
+            engine.validate({'version':1,'steps':[candidate]});self.step=candidate;self.accept()
         except Exception as exc:self.error.setText(str(exc))
+
+    def build_guided(self,rules):
+        self.building=True
+        self.guided_lossy=False
+        while self.guided_form.rowCount(): self.guided_form.removeRow(0)
+        self.rule_widgets={}
+        for key,spec in engine.OPERATIONS[self.step['type']].items():
+            row=QWidget(); line=QHBoxLayout(row); line.setContentsMargins(0,0,0,0)
+            mode=QComboBox();mode.addItems(['Fixed','Choices'] if 'choices' in spec else ['Fixed','Range','Choices']);line.addWidget(mode)
+            fixed=QLabel('Value: '+str(self.step['params'][key]));line.addWidget(fixed)
+            low=high=None
+            if 'choices' not in spec:
+                low=QSpinBox() if spec['integer'] else QDoubleSpinBox()
+                high=QSpinBox() if spec['integer'] else QDoubleSpinBox()
+                for field in (low,high):
+                    if isinstance(field,QDoubleSpinBox):field.setDecimals(4)
+                    field.setRange(spec['minimum'],spec['maximum']);field.setSingleStep(spec['step']);field.setValue(self.step['params'][key])
+                    field.valueChanged.connect(self.guided_changed);line.addWidget(field)
+                low.setToolTip('Minimum');high.setToolTip('Maximum');low.setPrefix('Min: ');high.setPrefix('Max: ')
+            choices=QLineEdit(); choices.setPlaceholderText('Comma-separated choices');line.addWidget(choices)
+            rule=rules.get(key)
+            if rule:
+                if 'choices' in rule:
+                    mode.setCurrentText('Choices');choices.setText(', '.join(map(str,rule['choices'])))
+                else:
+                    mode.setCurrentText('Range');low.setValue(rule['min']);high.setValue(rule['max'])
+                    if low.value()!=rule['min'] or high.value()!=rule['max']:self.guided_lossy=True
+            else:choices.setText(str(self.step['params'][key]))
+            self.rule_widgets[key]=(mode,low,high,choices,spec)
+            fixed.setVisible(mode.currentText()=='Fixed')
+            mode.currentTextChanged.connect(lambda value,label=fixed:label.setVisible(value=='Fixed'))
+            mode.currentTextChanged.connect(self.guided_changed);choices.textChanged.connect(self.guided_changed)
+            self.guided_form.addRow(key,row)
+        self.building=False;self.update_visibility()
+        self.tabs.widget(0).setEnabled(not self.guided_lossy)
+        if self.guided_lossy:self.tabs.setCurrentIndex(1)
+
+    def update_visibility(self):
+        for mode,low,high,choices,spec in self.rule_widgets.values():
+            if low is not None:low.setVisible(mode.currentText()=='Range');high.setVisible(mode.currentText()=='Range')
+            choices.setVisible(mode.currentText()=='Choices')
+
+    def guided_rules(self):
+        result={}
+        for key,(mode,low,high,choices,spec) in self.rule_widgets.items():
+            if mode.currentText()=='Range':result[key]={'min':low.value(),'max':high.value()}
+            elif mode.currentText()=='Choices':
+                values=[v.strip() for v in choices.text().split(',') if v.strip()]
+                if 'choices' not in spec:values=[int(v) if spec['integer'] else float(v) for v in values]
+                result[key]={'choices':values}
+        return result
+
+    def advanced_changed(self):self.advanced_dirty=True
+
+    def load_rules(self,rules):
+        self.build_guided(rules);self.editor.blockSignals(True)
+        self.editor.setPlainText(json.dumps(rules,indent=2));self.editor.blockSignals(False);self.advanced_dirty=False
+
+    def guided_changed(self,*args):
+        if self.building:return
+        self.update_visibility();self.advanced_dirty=False
+        try:
+            rules=self.guided_rules();self.editor.blockSignals(True)
+            self.editor.setPlainText(json.dumps(rules,indent=2));self.editor.blockSignals(False)
+            self.error.clear()
+        except ValueError as exc:self.error.setText(str(exc))
+
+    def tab_changed(self,index):
+        if index==0 and self.advanced_dirty:
+            try:
+                rules=json.loads(self.editor.toPlainText());candidate=copy.deepcopy(self.step)
+                candidate['random']={'probability':self.probability.value(),'params':rules}
+                engine.validate({'version':1,'steps':[candidate]});self.load_rules(rules)
+                self.error.setText('Use Advanced JSON to preserve extra decimal precision.' if self.guided_lossy else '')
+            except Exception as exc:
+                self.error.setText(str(exc));self.tabs.blockSignals(True);self.tabs.setCurrentIndex(1);self.tabs.blockSignals(False)
 
 class Signals(QObject):
     done=Signal(object); failed=Signal(str); progress=Signal(int,int)

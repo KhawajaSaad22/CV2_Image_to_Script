@@ -39,11 +39,16 @@ def qimage(array):
 class Canvas(QGraphicsView):
     pixel=Signal(str)
     def __init__(self):
-        super().__init__(); self.setScene(QGraphicsScene(self)); self.image=None; self.setMouseTracking(True)
+        super().__init__(); self.setScene(QGraphicsScene(self)); self.image=None; self.reset_next=True; self.setMouseTracking(True)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag); self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
     def show_array(self,array):
+        preserve=not self.reset_next and self.image is not None and self.image.shape[:2]==array.shape[:2]
+        transform=self.transform();center=self.mapToScene(self.viewport().rect().center())
         self.image=array; self.scene().clear(); self.scene().addPixmap(QPixmap.fromImage(qimage(array)))
-        self.scene().setSceneRect(0,0,array.shape[1],array.shape[0]); self.fit()
+        self.scene().setSceneRect(0,0,array.shape[1],array.shape[0])
+        if preserve:self.setTransform(transform);self.centerOn(center)
+        else:self.fit()
+        self.reset_next=False
     def fit(self): self.fitInView(self.sceneRect(),Qt.AspectRatioMode.KeepAspectRatio)
     def wheelEvent(self,event):
         factor=1.2 if event.angleDelta().y()>0 else 1/1.2
@@ -78,21 +83,37 @@ class Preview(QRunnable):
         except Exception as exc:self.signals.failed.emit(self.revision,str(exc))
         finally:self.signals.finished.emit(self.revision)
 
+class ExactSave(QRunnable):
+    def __init__(self,identity,image,pipeline,path):
+        super().__init__();self.identity=identity;self.image=image;self.pipeline=pipeline;self.path=path;self.signals=Signals()
+    def run(self):
+        try:
+            result=engine.run(self.image,self.pipeline,retain_intermediates=False)[0]
+            engine.write_image(self.path,result);self.signals.done.emit(self.identity,self.path)
+        except Exception as exc:self.signals.failed.emit(self.identity,str(exc))
+        finally:self.signals.finished.emit(self.identity)
+
 class Workbench(QMainWindow):
     def __init__(self):
         super().__init__(); configure_app(); self.setWindowTitle('CV2 Image to Script — Pipeline Workbench'); self.resize(1500,900)
         self.document=Document(); self.paths=[]; self.original=None; self.outputs=[]; self.final=None
         self.revision=0; self.cancel=threading.Event(); self.cache={}; self.cache_scope=None; self.worker_refs={}
+        self.save_jobs={};self.next_save=0
         self.pool=QThreadPool(self); self.pool.setMaxThreadCount(1)
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(160); self.timer.timeout.connect(self.start_preview)
         root=QWidget(); self.setCentralWidget(root); main=QVBoxLayout(root)
+        files=self.menuBar().addMenu('File')
+        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export fixed Python',self.export),('Save exact processed PNG',self.save_output)]:
+            action=QAction(text,self);action.triggered.connect(callback);files.addAction(action)
+        datasets=self.menuBar().addMenu('Dataset')
+        for text,callback in [('Random settings for selected step',self.random_settings),('Generate / random preview',self.generation),('Replay generated record',self.replay_generated)]:
+            action=QAction(text,self);action.triggered.connect(callback);datasets.addAction(action)
         toolbar=QHBoxLayout(); main.addLayout(toolbar)
-        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export fixed Python',self.export),('Save processed PNG',self.save_output),('Undo',self.undo),('Redo',self.redo)]:
+        for text,callback in [('Add images',self.open_images),('Undo',self.undo),('Redo',self.redo)]:
             button=QPushButton(text); button.clicked.connect(callback); toolbar.addWidget(button)
         self.exact=QCheckBox('Exact full resolution'); self.exact.toggled.connect(self.request_preview); toolbar.addWidget(self.exact)
-        random_bar=QHBoxLayout();main.addLayout(random_bar)
-        for text,callback in [('Random settings for selected step',self.random_settings),('Dataset / random preview',self.generation),('Replay generated record',self.replay_generated)]:
-            button=QPushButton(text);button.clicked.connect(callback);random_bar.addWidget(button)
+        for text,callback in [('Random settings',self.random_settings),('Dataset preview',self.generation)]:
+            button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
         body=QSplitter(); main.addWidget(body,1)
         self.gallery=QListWidget(); self.gallery.setMaximumWidth(220); self.gallery.currentRowChanged.connect(self.select_image); body.addWidget(self.gallery)
         middle=QWidget(); layout=QVBoxLayout(middle); canvases=QSplitter()
@@ -153,6 +174,7 @@ class Workbench(QMainWindow):
         if self.gallery.currentRow()<0:self.gallery.setCurrentRow(0)
     def select_image(self,index):
         if index<0:return
+        self.before.reset_next=True;self.after.reset_next=True
         self.invalidate(); self.cache={}; self.final=None; self.outputs=[]
         try:self.original=engine.read_image(self.paths[index]); self.request_preview()
         except Exception as exc:self.original=None; self.error(str(exc))
@@ -266,10 +288,16 @@ class Workbench(QMainWindow):
         if self.original is None:return
         path,_=QFileDialog.getSaveFileName(self,'Save exact processed image','processed.png','PNG (*.png)')
         if path:
-            # Exact save is explicit and synchronous; preview never becomes an export source.
-            try:engine.write_image(path,engine.run(self.original,self.document.pipeline,retain_intermediates=False)[0])
-            except Exception as exc:QMessageBox.warning(self,'Save failed',str(exc))
-    def closeEvent(self,event):self.cancel.set(); self.timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
+            self.next_save+=1;identity=self.next_save
+            job=ExactSave(identity,self.original.copy(),copy.deepcopy(self.document.pipeline),path)
+            job.signals.done.connect(lambda identity,path:self.statusBar().showMessage('Saved exact image: '+path))
+            job.signals.failed.connect(lambda identity,error:self.error('Save failed: '+error))
+            job.signals.finished.connect(lambda identity:self.save_jobs.pop(identity,None))
+            self.save_jobs[identity]=job;self.statusBar().showMessage('Saving exact image in background…');self.pool.start(job)
+    def closeEvent(self,event):
+        if self.save_jobs:
+            self.statusBar().showMessage('An exact save is running. Close again after it finishes.');event.ignore();return
+        self.cancel.set(); self.timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 if __name__=='__main__':
     if '--self-test' in sys.argv:

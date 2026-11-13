@@ -3,6 +3,11 @@
 See [Patch notes](PATCH_NOTES.md) for completed changes and
 [Roadmap](ROADMAP.md) for proposed UI cleanup, features and library options.
 
+Usability update: guided Fixed / Range / Choices controls retain an Advanced JSON
+editor. Preview updates preserve the inspected view when dimensions are unchanged.
+File/export actions are grouped in File; generation/replay actions are in Dataset.
+Exact PNG saves run in the background from an image/recipe snapshot.
+
 Profiling update: `tools/profile_pipeline.py` now records baseline and sampled peak
 process RSS in addition to warm latency. Sampling starts before image loading and
 runs every 10 ms; brief peaks can be missed. Values include process overhead and
@@ -119,7 +124,8 @@ Preview work runs on a worker thread; stale requests are canceled/ignored. Prefi
 caches are scoped to input content and configuration. Retained preview cache is capped
 at 96 MiB; intermediate arrays are capped at 512 MiB. Reduce resolution or export the
 pipeline if exact intermediate inspection exceeds the limit. A running OpenCV call
-cannot be interrupted until it returns. Exact PNG saving is currently synchronous.
+cannot be interrupted until it returns. Exact PNG saving runs in a background job;
+closing is deferred until pending exact saves finish. Replay remains synchronous.
 The last 100 configuration edits are retained for undo; image pixels are not history.
 Stage timings include cache hits and are diagnostic, not benchmark measurements.
 
@@ -154,8 +160,8 @@ desktop display here; no X11/VNC service or browser interface is bundled.
 ## Randomization and dataset generation
 
 Select an operation, then **Random settings for selected step**. Set an application
-probability and parameter rules. The current functional dialog uses validated JSON;
-visual redesign and more polished range controls are a separate pass. Example rules
+probability and parameter rules using guided Fixed, Range or Choices controls.
+The Advanced JSON tab supports direct editing and round-trips to the same rules. Example rules
 for brightness/contrast:
 
 ```json

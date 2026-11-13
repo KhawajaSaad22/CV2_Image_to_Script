@@ -2,7 +2,12 @@
 
 Reviewed 13 November 2026 against the code and Git history. This is a proposal;
 the documentation update does not install libraries or implement these features.
-The existing 60-test suite passed during this review.
+The initial 60-test suite passed during that review.
+
+Implementation update: guided controls/Advanced JSON, grouped menus, viewport
+preservation and asynchronous exact saving are now delivered, with 64 passing local
+tests. The observation table below records the original review; linked views,
+background replay, recovery, drag/drop and structural cleanup remain planned.
 
 ## First priority: make the current workflow clearer
 
