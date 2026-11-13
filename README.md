@@ -336,3 +336,9 @@ License: Apache 2.0; see LICENSE.
 ## GPU update — 13 November 2026
 
 Optional CUDA preprocessing is available for preview, exact saving and the dedicated CLI. See [GPU.md](GPU.md) for supported operations, CPU fallback and measured scope. Standalone exports and dataset generation remain CPU-based.
+
+## Recipe protection update — 13 November 2026
+
+Recipes now track saved state independently of undo/redo. An asterisk marks unsaved changes in the window title. Opening another recipe or closing offers Save, Discard or Cancel. A cancelled save dialog or failed save keeps the recipe dirty and cancels the pending action. Opening a valid recipe establishes a clean baseline and clears the previous recipe's undo history. Exporting scripts/images does not mark a recipe saved.
+
+This protects normal close/open workflows; autosave, crash recovery and recent-file history remain future work. Local validation: 72 tests run, with one CUDA-only skip in the CPU environment.

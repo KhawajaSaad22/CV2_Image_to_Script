@@ -107,7 +107,7 @@ class ExactSave(QRunnable):
 class Workbench(QMainWindow):
     def __init__(self):
         super().__init__(); configure_app(); self.setWindowTitle('CV2 Image to Script — Pipeline Workbench'); self.resize(1500,900)
-        self.document=Document(); self.paths=[]; self.original=None; self.outputs=[]; self.final=None
+        self.document=Document(); self.recipe_path=None; self.paths=[]; self.original=None; self.outputs=[]; self.final=None
         self.revision=0; self.cancel=threading.Event(); self.cache={}; self.cache_scope=None; self.worker_refs={}
         self.save_jobs={};self.next_save=0
         self.pool=QThreadPool(self); self.pool.setMaxThreadCount(1)
@@ -226,6 +226,7 @@ class Workbench(QMainWindow):
         if self.final is None:return
         i=self.stage.currentIndex(); self.after.show_array(self.outputs[i-1] if 0<i<=len(self.outputs) else self.final)
     def refresh_steps(self,index=None):
+        self.update_recipe_title()
         if index is None:index=self.steps.currentRow()
         self.steps.blockSignals(True); self.steps.clear()
         for n,step in enumerate(self.document.pipeline['steps']):
@@ -283,18 +284,36 @@ class Workbench(QMainWindow):
         p=copy.deepcopy(self.document.pipeline); spec=engine.OPERATIONS[p['steps'][i]['type']][key]
         if key in ('kernel','block') and value%2==0:value=min(value+1,spec['maximum'])
         p['steps'][i]['params'][key]=value
-        try:self.document.commit(p); self.request_preview()
+        try:self.document.commit(p); self.update_recipe_title(); self.request_preview()
         except ValueError as exc:self.error(str(exc)); QTimer.singleShot(0,self.build_settings)
     def open_pipeline(self):
         path,_=QFileDialog.getOpenFileName(self,'Open pipeline','','Pipeline (*.json)')
         if path:
-            try:self.commit(engine.load_pipeline(path),0)
+            try:
+                pipeline=engine.load_pipeline(path)
+                if not self.confirm_unsaved():return
+                self.document.load(pipeline);self.recipe_path=Path(path);self.refresh_steps(0)
             except Exception as exc:QMessageBox.warning(self,'Cannot load pipeline',str(exc))
     def save_pipeline(self):
-        path,_=QFileDialog.getSaveFileName(self,'Save pipeline','pipeline.json','JSON (*.json)')
+        path,_=QFileDialog.getSaveFileName(self,'Save pipeline',str(self.recipe_path or 'pipeline.json'),'JSON (*.json)')
         if path:
-            try:engine.save_pipeline(path,self.document.pipeline)
+            try:
+                engine.save_pipeline(path,self.document.pipeline)
+                self.recipe_path=Path(path);self.document.mark_saved();self.update_recipe_title()
+                self.statusBar().showMessage('Saved pipeline: '+path);return True
             except Exception as exc:QMessageBox.warning(self,'Save failed',str(exc))
+        return False
+    def update_recipe_title(self):
+        name=self.recipe_path.name if self.recipe_path else 'Untitled recipe'
+        self.setWindowTitle(name+'[*] — CV2 Image to Script')
+        self.setWindowModified(self.document.dirty)
+    def confirm_unsaved(self):
+        if not self.document.dirty:return True
+        buttons=QMessageBox.StandardButton
+        choice=QMessageBox.question(self,'Unsaved recipe','Save recipe changes before continuing?',
+                                   buttons.Save|buttons.Discard|buttons.Cancel,buttons.Cancel)
+        if choice==buttons.Save:return self.save_pipeline()
+        return choice==buttons.Discard
     def export(self):
         path,_=QFileDialog.getSaveFileName(self,'Export standalone Python','process_images.py','Python (*.py)')
         if path:
@@ -313,6 +332,7 @@ class Workbench(QMainWindow):
     def closeEvent(self,event):
         if self.save_jobs:
             self.statusBar().showMessage('An exact save is running. Close again after it finishes.');event.ignore();return
+        if not self.confirm_unsaved():event.ignore();return
         self.cancel.set(); self.timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 if __name__=='__main__':

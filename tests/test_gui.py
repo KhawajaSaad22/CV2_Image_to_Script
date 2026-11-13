@@ -27,6 +27,7 @@ class GuiTests(unittest.TestCase):
         engine.write_image(self.root/'one.png',self.image); engine.write_image(self.root/'two.png',np.zeros_like(self.image))
         self.window=Workbench(); self.window.show(); self.window.load_paths([str(self.root/'one.png'),str(self.root/'two.png')]); self.wait_preview()
     def tearDown(self):
+        self.window.document.mark_saved()
         self.window.close(); self.window.deleteLater()
         QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
         self.app.processEvents(); self.temp.cleanup()
@@ -40,6 +41,26 @@ class GuiTests(unittest.TestCase):
         self.add('grayscale'); self.assertEqual(self.window.final.ndim,2)
         self.assertEqual(self.window.stage.count(),2)
         self.window.gallery.setCurrentRow(1); self.wait_preview(); self.assertEqual(self.window.final.max(),0)
+    def test_unsaved_close_cancel_and_save_dialog_cancel(self):
+        self.add('gamma')
+        self.assertTrue(self.window.isWindowModified())
+        from PySide6.QtGui import QCloseEvent
+        from PySide6.QtWidgets import QMessageBox
+        with patch('workbench.QMessageBox.question',return_value=QMessageBox.StandardButton.Cancel):
+            event=QCloseEvent();self.window.closeEvent(event);self.assertFalse(event.isAccepted())
+        with patch('workbench.QMessageBox.question',return_value=QMessageBox.StandardButton.Save),patch('workbench.QFileDialog.getSaveFileName',return_value=('','')):
+            self.assertFalse(self.window.confirm_unsaved())
+        self.assertTrue(self.window.document.dirty)
+    def test_open_cancel_and_failed_save_preserve_unsaved_recipe(self):
+        self.add('gamma');before=copy.deepcopy(self.window.document.pipeline)
+        path=self.root/'incoming.json';engine.save_pipeline(path,{'version':1,'steps':[]})
+        from PySide6.QtWidgets import QMessageBox
+        with patch('workbench.QFileDialog.getOpenFileName',return_value=(str(path),'')),patch('workbench.QMessageBox.question',return_value=QMessageBox.StandardButton.Cancel):
+            self.window.open_pipeline()
+        self.assertEqual(self.window.document.pipeline,before)
+        with patch('workbench.QFileDialog.getSaveFileName',return_value=(str(path),'')),patch('engine.save_pipeline',side_effect=OSError('Disk full')),patch('workbench.QMessageBox.warning'):
+            self.assertFalse(self.window.save_pipeline())
+        self.assertTrue(self.window.document.dirty)
     def test_reorder_disable_history(self):
         self.add('grayscale'); self.add('gaussian_blur'); ids=[s['id'] for s in self.window.document.pipeline['steps']]
         self.window.move(-1); self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['id'],ids[1])
@@ -63,7 +84,7 @@ class GuiTests(unittest.TestCase):
         self.add('gamma'); path=str(self.root/'pipeline.json'); script=str(self.root/'process.py')
         with patch('workbench.QFileDialog.getSaveFileName',return_value=(path,'')):self.window.save_pipeline()
         self.window.remove(); self.wait_preview()
-        with patch('workbench.QFileDialog.getOpenFileName',return_value=(path,'')):self.window.open_pipeline()
+        with patch('workbench.QFileDialog.getOpenFileName',return_value=(path,'')),patch.object(self.window,'confirm_unsaved',return_value=True):self.window.open_pipeline()
         self.wait_preview(); self.assertEqual(self.window.document.pipeline['steps'][0]['type'],'gamma')
         with patch('workbench.QFileDialog.getSaveFileName',return_value=(script,'')):self.window.export()
         self.assertIn('run_cli(PIPELINE)',Path(script).read_text())

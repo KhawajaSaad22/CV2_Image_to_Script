@@ -16,6 +16,16 @@ Future items are proposals and are not included in the current application.
 
 ## Completed patches
 
+### 13 November 2026 — Unsaved recipe protection
+
+- Added saved-state tracking and a title asterisk that follows undo/redo.
+- Added Save / Discard / Cancel before closing or opening another recipe. Cancelled and failed saves preserve unsaved state and stop the pending action.
+- Opening a valid recipe clears cross-recipe undo history and establishes a clean baseline. Invalid recipes leave the current document intact.
+- Kept export/image saving independent of recipe saved state; kept background exact-save close protection.
+- Updated preview rendering cleanup to close without an unattended prompt.
+- Validation: 72 tests run locally with one CUDA-only skip; rendered the demo UI. Autosave/crash recovery and recent files remain planned.
+
+
 ### 13 November 2026 — Optional CUDA preprocessing
 
 [GPU implementation](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/0e06f435ad384318da55a6b90947346635e88cfc) · [CPU cache compatibility fix](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/b42d079a35352c8f2a33243f2aa9839689a245b7)

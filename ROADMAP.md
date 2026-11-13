@@ -88,3 +88,5 @@ First implement guided random controls, preserve viewport state and group action
 Next add asynchronous exact save plus dirty-state protection. Then extract UI modules
 and introduce optional analysis tools. Promote completed work into
 [PATCH_NOTES.md](PATCH_NOTES.md) with its commit and validation evidence.
+
+Saved-state follow-up: title markers and Save/Discard/Cancel protection for open/close are now delivered. Undo/redo follows the saved baseline. Autosave/crash recovery and recent-file navigation remain planned.

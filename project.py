@@ -10,7 +10,15 @@ def runtime_dir():
     return Path(sys._MEIPASS)/'runtime' if getattr(sys,'frozen',False) else Path(__file__).parent
 
 class Document:
-    def __init__(self): self.pipeline={'version':1,'steps':[]}; self.undo_stack=[]; self.redo_stack=[]
+    def __init__(self):
+        self.pipeline={'version':1,'steps':[]}; self.undo_stack=[]; self.redo_stack=[]
+        self.mark_saved()
+    @property
+    def dirty(self):return self.pipeline!=self.saved_pipeline
+    def mark_saved(self):self.saved_pipeline=copy.deepcopy(self.pipeline)
+    def load(self,pipeline):
+        self.pipeline=engine.validate(pipeline); self.undo_stack=[]; self.redo_stack=[]
+        self.mark_saved()
     def commit(self,pipeline):
         updated=engine.validate(pipeline)
         if updated==self.pipeline:return
