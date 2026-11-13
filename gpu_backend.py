@@ -27,13 +27,13 @@ def supported(kind,params,ndim):
     return kind in ('crop','flip','brightness_contrast','gamma') or kind=='resize' and params['interpolation']=='nearest' or kind=='threshold' and params['mode']=='fixed' and ndim==2
 
 
-def run(image,pipeline,device='auto',cancel=None,retain_intermediates=True,strict=False):
+def run(image,pipeline,device='auto',cancel=None,retain_intermediates=True,strict=False,cache=None):
     pipeline=engine.validate(pipeline)
     if image.dtype!=np.uint8 or image.ndim not in (2,3) or min(image.shape[:2])<1 or image.ndim==3 and image.shape[2]!=3:
         raise ValueError('Expected nonempty uint8 RGB or grayscale image')
     torch,reason=select_device(device)
     if torch is None:
-        final,outputs,timings=engine.run(image,pipeline,cancel=cancel,retain_intermediates=retain_intermediates)
+        final,outputs,timings=engine.run(image,pipeline,cache=cache,cancel=cancel,retain_intermediates=retain_intermediates)
         return final,outputs,timings,{'device':'cpu','reason':reason,'steps':['cpu' if s['enabled'] else 'disabled' for s in pipeline['steps']]}
     current=image.copy();outputs=[];timings=[];executed=[];retained=0
     def cpu(value):return value.detach().cpu().numpy().copy() if isinstance(value,torch.Tensor) else value.copy()

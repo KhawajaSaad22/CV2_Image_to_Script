@@ -81,8 +81,8 @@ class Preview(QRunnable):
                 final,outputs,timings=engine.run(image,self.pipeline,self.cache,self.cancel.is_set);execution={'device':'cpu'}
             else:
                 from gpu_backend import run
-                final,outputs,timings,execution=run(image,self.pipeline,self.device,cancel=self.cancel.is_set)
-                self.cache={}
+                final,outputs,timings,execution=run(image,self.pipeline,self.device,cancel=self.cancel.is_set,cache=self.cache)
+                if execution['device']!='cpu':self.cache={}
             # Limit retained prefix cache to 96 MiB. Intermediates of current preview remain selectable.
             while sum(x.nbytes for x in self.cache.values())>96*1024*1024:self.cache.pop(next(iter(self.cache)))
             self.signals.done.emit(self.revision,(image,final,outputs,timings,(time.perf_counter()-start)*1000,self.cache,execution))

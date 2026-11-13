@@ -29,6 +29,17 @@ class GPUBackendTests(unittest.TestCase):
             self.assertEqual(info['device'],'cpu')
             with self.assertRaisesRegex(ValueError,'PyTorch'):run(image,{'version':1,'steps':[]},'cuda')
 
+    def test_auto_cpu_fallback_retains_preview_cache(self):
+        from unittest.mock import patch
+        image=np.ones((8,8),np.uint8);cache={}
+        recipe={'version':1,'steps':[engine.new_step('flip')]}
+        with patch.dict('sys.modules',{'torch':None}):
+            run(image,recipe,'auto',cache=cache)
+            self.assertTrue(cache)
+            with patch('engine.apply_operation',side_effect=AssertionError('Cache miss')):
+                actual,_,_,info=run(image,recipe,'auto',cache=cache)
+        np.testing.assert_array_equal(actual,image);self.assertEqual(info['device'],'cpu')
+
     @unittest.skipUnless(CUDA,'Needs a visible CUDA device')
     def test_cuda_supported_pipeline_and_mixed_fallback(self):
         image=np.random.default_rng(9).integers(0,256,(31,43,3),np.uint8);recipe=self.recipe()
