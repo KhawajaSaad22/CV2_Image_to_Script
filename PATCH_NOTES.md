@@ -16,6 +16,17 @@ Future items are proposals and are not included in the current application.
 
 ## Completed patches
 
+### 13 November 2026 — Optional CUDA preprocessing
+
+- Added Auto / CPU / CUDA preview and exact-save selection, execution metadata and a dedicated GPU CLI.
+- Added CUDA crop, flip, brightness/contrast, gamma, nearest resize and grayscale fixed threshold; other operations explicitly fall back to CPU or fail in strict mode.
+- Kept standalone exports and dataset generation on the independent CPU engine.
+- Added optional PyTorch requirements and a GPU Docker target; default packaging remains CPU-compatible.
+- Removed unnecessary hashing during uncached CPU execution.
+- Validated CUDA operations and mixed fallback. The 2048² synthetic recipe matched CPU pixels exactly and measured 9.49 ms CUDA median versus 37.46 ms CPU, including transfers. See [GPU.md](GPU.md) for scope.
+- Future work: more CUDA operations, persistent device buffers and real-image/GUI benchmarks.
+
+
 ### 13 November 2026 — Guided settings and responsive workbench
 
 [Commit 39d56926](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/39d5692692b30eabedc2737373b277cc0e8e576b)

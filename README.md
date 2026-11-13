@@ -332,3 +332,7 @@ library adapters, and broader real-dataset validation remain future work.
 - `cv2_image_app.py`: preserved original prototype.
 
 License: Apache 2.0; see LICENSE.
+
+## GPU update — 13 November 2026
+
+Optional CUDA preprocessing is available for preview, exact saving and the dedicated CLI. See [GPU.md](GPU.md) for supported operations, CPU fallback and measured scope. Standalone exports and dataset generation remain CPU-based.

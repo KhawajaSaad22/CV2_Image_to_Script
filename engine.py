@@ -155,7 +155,7 @@ def run(image,pipeline,cache=None,cancel=None,retain_intermediates=True):
     pipeline=validate(pipeline)
     if image.dtype!=np.uint8 or image.ndim not in (2,3) or min(image.shape[:2])<1 or (image.ndim==3 and image.shape[2]!=3): raise ValueError('Expected nonempty 8-bit grayscale or RGB image')
     current=image.copy(); outputs=[]; timings=[]; prefix=[]
-    source_key=hashlib.sha256(image.tobytes()).hexdigest()+str(image.shape)
+    source_key=hashlib.sha256(image.tobytes()).hexdigest()+str(image.shape) if cache is not None else ''
     for step in pipeline['steps']:
         if cancel and cancel(): raise InterruptedError('Superseded preview')
         prefix.append(step); key=source_key+json.dumps(prefix,sort_keys=True); start=time.perf_counter()

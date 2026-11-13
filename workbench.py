@@ -66,29 +66,40 @@ class Signals(QObject):
     finished=Signal(int)
 
 class Preview(QRunnable):
-    def __init__(self,revision,image,pipeline,fast,cache,cancel):
+    def __init__(self,revision,image,pipeline,fast,cache,cancel,device='cpu'):
         super().__init__(); self.revision=revision; self.image=image; self.pipeline=pipeline
         self.fast=fast; self.cache=cache; self.cancel=cancel; self.signals=Signals()
+        self.device=device
     def run(self):
         try:
             if self.cancel.is_set():return
             image=self.image
             if self.fast and max(image.shape[:2])>1000:
                 factor=1000/max(image.shape[:2]); image=cv2.resize(image,(max(1,round(image.shape[1]*factor)),max(1,round(image.shape[0]*factor))),interpolation=cv2.INTER_AREA)
-            start=time.perf_counter(); final,outputs,timings=engine.run(image,self.pipeline,self.cache,self.cancel.is_set)
+            start=time.perf_counter()
+            if self.device=='cpu':
+                final,outputs,timings=engine.run(image,self.pipeline,self.cache,self.cancel.is_set);execution={'device':'cpu'}
+            else:
+                from gpu_backend import run
+                final,outputs,timings,execution=run(image,self.pipeline,self.device,cancel=self.cancel.is_set)
+                self.cache={}
             # Limit retained prefix cache to 96 MiB. Intermediates of current preview remain selectable.
             while sum(x.nbytes for x in self.cache.values())>96*1024*1024:self.cache.pop(next(iter(self.cache)))
-            self.signals.done.emit(self.revision,(image,final,outputs,timings,(time.perf_counter()-start)*1000,self.cache))
+            self.signals.done.emit(self.revision,(image,final,outputs,timings,(time.perf_counter()-start)*1000,self.cache,execution))
         except InterruptedError:pass
         except Exception as exc:self.signals.failed.emit(self.revision,str(exc))
         finally:self.signals.finished.emit(self.revision)
 
 class ExactSave(QRunnable):
-    def __init__(self,identity,image,pipeline,path):
+    def __init__(self,identity,image,pipeline,path,device='cpu'):
         super().__init__();self.identity=identity;self.image=image;self.pipeline=pipeline;self.path=path;self.signals=Signals()
+        self.device=device
     def run(self):
         try:
-            result=engine.run(self.image,self.pipeline,retain_intermediates=False)[0]
+            if self.device=='cpu':result=engine.run(self.image,self.pipeline,retain_intermediates=False)[0]
+            else:
+                from gpu_backend import run
+                result=run(self.image,self.pipeline,self.device,retain_intermediates=False)[0]
             engine.write_image(self.path,result);self.signals.done.emit(self.identity,self.path)
         except Exception as exc:self.signals.failed.emit(self.identity,str(exc))
         finally:self.signals.finished.emit(self.identity)
@@ -103,7 +114,7 @@ class Workbench(QMainWindow):
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(160); self.timer.timeout.connect(self.start_preview)
         root=QWidget(); self.setCentralWidget(root); main=QVBoxLayout(root)
         files=self.menuBar().addMenu('File')
-        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export fixed Python',self.export),('Save exact processed PNG',self.save_output)]:
+        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export fixed Python (CPU)',self.export),('Save exact processed PNG',self.save_output)]:
             action=QAction(text,self);action.triggered.connect(callback);files.addAction(action)
         datasets=self.menuBar().addMenu('Dataset')
         for text,callback in [('Random settings for selected step',self.random_settings),('Generate / random preview',self.generation),('Replay generated record',self.replay_generated)]:
@@ -112,6 +123,9 @@ class Workbench(QMainWindow):
         for text,callback in [('Add images',self.open_images),('Undo',self.undo),('Redo',self.redo)]:
             button=QPushButton(text); button.clicked.connect(callback); toolbar.addWidget(button)
         self.exact=QCheckBox('Exact full resolution'); self.exact.toggled.connect(self.request_preview); toolbar.addWidget(self.exact)
+        self.processing_device=QComboBox();self.processing_device.addItems(['auto','cpu','cuda'])
+        self.processing_device.setToolTip('Auto uses CUDA where supported; CUDA requires optional PyTorch. Unsupported operations still use CPU.')
+        self.processing_device.currentTextChanged.connect(self.request_preview);toolbar.addWidget(QLabel('Processing device'));toolbar.addWidget(self.processing_device)
         for text,callback in [('Random settings',self.random_settings),('Dataset preview',self.generation)]:
             button=QPushButton(text);button.clicked.connect(callback);toolbar.addWidget(button)
         body=QSplitter(); main.addWidget(body,1)
@@ -184,10 +198,10 @@ class Workbench(QMainWindow):
         self.invalidate(); self.timer.start()
     def start_preview(self):
         if self.original is None:return
-        scope=(self.gallery.currentRow(),self.exact.isChecked())
+        scope=(self.gallery.currentRow(),self.exact.isChecked(),self.processing_device.currentText())
         if scope!=self.cache_scope:self.cache={}; self.cache_scope=scope
         revision=self.revision
-        worker=Preview(revision,self.original,self.document.pipeline,self.exact.isChecked()==False,dict(self.cache),self.cancel)
+        worker=Preview(revision,self.original,self.document.pipeline,self.exact.isChecked()==False,dict(self.cache),self.cancel,self.processing_device.currentText())
         worker.signals.done.connect(self.preview_done); worker.signals.failed.connect(self.preview_failed)
         worker.signals.finished.connect(self.worker_finished)
         self.worker_refs[revision]=worker; self.metadata.setText('Processing…'); self.pool.start(worker)
@@ -198,12 +212,14 @@ class Workbench(QMainWindow):
     def preview_done(self,revision,result):
         self.worker_refs.pop(revision,None)
         if revision!=self.revision:return
-        image,self.final,self.outputs,times,elapsed,self.cache=result
+        image,self.final,self.outputs,times,elapsed,self.cache,execution=result
+        self.last_execution=execution
+        self.metadata.setToolTip(execution.get('reason','')+' Step devices: '+', '.join(execution.get('steps',[])))
         self.before.show_array(image)
         selected=self.stage.currentIndex(); self.stage.blockSignals(True); self.stage.clear(); self.stage.addItem('Final output')
         for i,step in enumerate(self.document.pipeline['steps']):self.stage.addItem(f"{i+1}. {step['type']} ({times[i]:.1f} ms)")
         self.stage.setCurrentIndex(min(max(selected,0),self.stage.count()-1)); self.stage.blockSignals(False); self.display_stage()
-        mode='EXACT — original pixels' if self.exact.isChecked() else 'FAST — max 1000 px, settings act on preview pixels'
+        mode=('EXACT — original pixels' if self.exact.isChecked() else 'FAST — max 1000 px, settings act on preview pixels')+' | Backend: '+execution['device']
         h,w=self.final.shape[:2]; channels=1 if self.final.ndim==2 else self.final.shape[2]
         self.metadata.setText(f'{mode} | Output {w} × {h}, {channels} channels, uint8, range {self.final.min()}–{self.final.max()} | {elapsed:.1f} ms. Export and saved PNG always use original resolution.')
     def display_stage(self,*args):
@@ -282,14 +298,14 @@ class Workbench(QMainWindow):
     def export(self):
         path,_=QFileDialog.getSaveFileName(self,'Export standalone Python','process_images.py','Python (*.py)')
         if path:
-            try:export_script(path,self.document.pipeline); self.statusBar().showMessage('Standalone script exported. Run: python process_images.py INPUT OUTPUT')
+            try:export_script(path,self.document.pipeline); self.statusBar().showMessage('CPU/OpenCV standalone script exported. Run: python process_images.py INPUT OUTPUT')
             except Exception as exc:QMessageBox.warning(self,'Export failed',str(exc))
     def save_output(self):
         if self.original is None:return
         path,_=QFileDialog.getSaveFileName(self,'Save exact processed image','processed.png','PNG (*.png)')
         if path:
             self.next_save+=1;identity=self.next_save
-            job=ExactSave(identity,self.original.copy(),copy.deepcopy(self.document.pipeline),path)
+            job=ExactSave(identity,self.original.copy(),copy.deepcopy(self.document.pipeline),path,self.processing_device.currentText())
             job.signals.done.connect(lambda identity,path:self.statusBar().showMessage('Saved exact image: '+path))
             job.signals.failed.connect(lambda identity,error:self.error('Save failed: '+error))
             job.signals.finished.connect(lambda identity:self.save_jobs.pop(identity,None))
