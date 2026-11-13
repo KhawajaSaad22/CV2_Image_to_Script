@@ -18,11 +18,14 @@ Future items are proposals and are not included in the current application.
 
 ### 13 November 2026 — Optional CUDA preprocessing
 
+[GPU implementation](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/0e06f435ad384318da55a6b90947346635e88cfc) · [CPU cache compatibility fix](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/b42d079a35352c8f2a33243f2aa9839689a245b7)
+
 - Added Auto / CPU / CUDA preview and exact-save selection, execution metadata and a dedicated GPU CLI.
 - Added CUDA crop, flip, brightness/contrast, gamma, nearest resize and grayscale fixed threshold; other operations explicitly fall back to CPU or fail in strict mode.
 - Kept standalone exports and dataset generation on the independent CPU engine.
 - Added optional PyTorch requirements and a GPU Docker target; default packaging remains CPU-compatible.
-- Removed unnecessary hashing during uncached CPU execution.
+- Removed unnecessary hashing during uncached CPU execution; preserved prefix caching when Auto falls back to CPU.
+- Validation: 68 workbench tests pass locally with one CUDA-only skip in the CPU environment; all four dedicated GPU/backend tests pass in the CUDA container.
 - Validated CUDA operations and mixed fallback. The 2048² synthetic recipe matched CPU pixels exactly and measured 9.49 ms CUDA median versus 37.46 ms CPU, including transfers. See [GPU.md](GPU.md) for scope.
 - Future work: more CUDA operations, persistent device buffers and real-image/GUI benchmarks.
 
