@@ -18,6 +18,8 @@ Future items are proposals and are not included in the current application.
 
 ### 13 November 2026 — Unsaved recipe protection
 
+[Implementation commit](https://github.com/KhawajaSaad22/CV2_Image_to_Script/commit/220c2fd02ac75b1123b33135d217492c4e16c499)
+
 - Added saved-state tracking and a title asterisk that follows undo/redo.
 - Added Save / Discard / Cancel before closing or opening another recipe. Cancelled and failed saves preserve unsaved state and stop the pending action.
 - Opening a valid recipe clears cross-recipe undo history and establishes a clean baseline. Invalid recipes leave the current document intact.
