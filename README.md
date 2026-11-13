@@ -1,5 +1,8 @@
 # CV2 Image to Script — Pipeline Workbench
 
+See [Patch notes](PATCH_NOTES.md) for completed changes and
+[Roadmap](ROADMAP.md) for proposed UI cleanup, features and library options.
+
 Profiling update: `tools/profile_pipeline.py` now records baseline and sampled peak
 process RSS in addition to warm latency. Sampling starts before image loading and
 runs every 10 ms; brief peaks can be missed. Values include process overhead and
