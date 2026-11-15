@@ -9,12 +9,14 @@ import time
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt,QObject,Signal,QTimer,QRunnable,QThreadPool
-from PySide6.QtGui import QAction,QImage,QPixmap,QPainter,QFont,QFontDatabase,QPalette,QColor
+from PySide6.QtGui import QAction,QFont,QFontDatabase,QPalette,QColor
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QPushButton,QComboBox,QListWidget,QListWidgetItem,QSplitter,QFileDialog,QCheckBox,
-    QFormLayout,QSpinBox,QDoubleSpinBox,QSlider,QScrollArea,QGraphicsView,QGraphicsScene,QMessageBox)
+    QFormLayout,QSpinBox,QDoubleSpinBox,QSlider,QScrollArea,QMessageBox)
 import engine
 from project import Document,export_script
+from canvas import Canvas,qimage
+from comparison import absolute_difference
 
 def configure_app():
     app=QApplication.instance(); app.setStyle('Fusion')
@@ -30,35 +32,6 @@ def configure_app():
         (QPalette.ColorRole.HighlightedText,'#ffffff'),(QPalette.ColorRole.ToolTipBase,'#283a50'),
         (QPalette.ColorRole.ToolTipText,'#ffffff')]:palette.setColor(role,QColor(color))
     app.setPalette(palette)
-
-def qimage(array):
-    array=np.ascontiguousarray(array)
-    fmt=QImage.Format.Format_RGB888 if array.ndim==3 else QImage.Format.Format_Grayscale8
-    return QImage(array.data,array.shape[1],array.shape[0],array.strides[0],fmt).copy()
-
-class Canvas(QGraphicsView):
-    pixel=Signal(str)
-    def __init__(self):
-        super().__init__(); self.setScene(QGraphicsScene(self)); self.image=None; self.reset_next=True; self.setMouseTracking(True)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag); self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    def show_array(self,array):
-        preserve=not self.reset_next and self.image is not None and self.image.shape[:2]==array.shape[:2]
-        transform=self.transform();center=self.mapToScene(self.viewport().rect().center())
-        self.image=array; self.scene().clear(); self.scene().addPixmap(QPixmap.fromImage(qimage(array)))
-        self.scene().setSceneRect(0,0,array.shape[1],array.shape[0])
-        if preserve:self.setTransform(transform);self.centerOn(center)
-        else:self.fit()
-        self.reset_next=False
-    def fit(self): self.fitInView(self.sceneRect(),Qt.AspectRatioMode.KeepAspectRatio)
-    def wheelEvent(self,event):
-        factor=1.2 if event.angleDelta().y()>0 else 1/1.2
-        scale=self.transform().m11()
-        if .02<scale*factor<64:self.scale(factor,factor)
-    def mouseMoveEvent(self,event):
-        if self.image is not None:
-            point=self.mapToScene(event.position().toPoint()); x,y=int(point.x()),int(point.y())
-            if 0<=y<self.image.shape[0] and 0<=x<self.image.shape[1]: self.pixel.emit(f'Pixel ({x}, {y}): {self.image[y,x].tolist()}')
-        super().mouseMoveEvent(event)
 
 class Signals(QObject):
     done=Signal(int,object)
@@ -109,7 +82,7 @@ class Workbench(QMainWindow):
         super().__init__(); configure_app(); self.setWindowTitle('CV2 Image to Script — Pipeline Workbench'); self.resize(1500,900)
         self.document=Document(); self.recipe_path=None; self.paths=[]; self.original=None; self.outputs=[]; self.final=None
         self.revision=0; self.cancel=threading.Event(); self.cache={}; self.cache_scope=None; self.worker_refs={}
-        self.save_jobs={};self.next_save=0
+        self.save_jobs={};self.next_save=0;self._syncing_views=False
         self.pool=QThreadPool(self); self.pool.setMaxThreadCount(1)
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(160); self.timer.timeout.connect(self.start_preview)
         root=QWidget(); self.setCentralWidget(root); main=QVBoxLayout(root)
@@ -132,13 +105,27 @@ class Workbench(QMainWindow):
         self.gallery=QListWidget(); self.gallery.setMaximumWidth(220); self.gallery.currentRowChanged.connect(self.select_image); body.addWidget(self.gallery)
         middle=QWidget(); layout=QVBoxLayout(middle); canvases=QSplitter()
         self.before=Canvas(); self.after=Canvas()
+        self.before.view_changed.connect(lambda:self.sync_views(self.before,self.after))
+        self.after.view_changed.connect(lambda:self.sync_views(self.after,self.before))
         for title,canvas in [('Original / preview input',self.before),('Processed / selected stage',self.after)]:
-            pane=QWidget(); col=QVBoxLayout(pane); col.addWidget(QLabel(title)); col.addWidget(canvas); canvases.addWidget(pane)
+            pane=QWidget(); col=QVBoxLayout(pane);heading=QLabel(title);col.addWidget(heading); col.addWidget(canvas); canvases.addWidget(pane)
+            if canvas is self.after:self.after_heading=heading
             canvas.pixel.connect(self.statusBar().showMessage)
         layout.addWidget(canvases,1)
         controls=QHBoxLayout(); self.stage=QComboBox(); self.stage.addItem('Final output'); self.stage.currentIndexChanged.connect(self.display_stage)
         controls.addWidget(QLabel('Inspect stage:')); controls.addWidget(self.stage,1)
-        fit=QPushButton('Fit both views'); fit.clicked.connect(lambda:(self.before.fit(),self.after.fit())); controls.addWidget(fit); layout.addLayout(controls)
+        fit=QPushButton('Fit both views'); fit.clicked.connect(self.fit_views); controls.addWidget(fit); layout.addLayout(controls)
+        comparison_controls=QHBoxLayout()
+        comparison_controls.addWidget(QLabel('Display:'))
+        self.view_mode=QComboBox();self.view_mode.addItems(['Processed image','Absolute difference'])
+        self.view_mode.setToolTip('Display only. Difference compares the preview input with the selected output at the same pixel coordinates; it does not align images.')
+        self.view_mode.currentIndexChanged.connect(self.display_stage);comparison_controls.addWidget(self.view_mode)
+        self.link_views=QCheckBox('Link zoom / pan');self.link_views.setEnabled(False)
+        self.link_views.toggled.connect(lambda:self.sync_views(self.before,self.after));comparison_controls.addWidget(self.link_views)
+        actual=QPushButton('100%');actual.setToolTip('One image pixel per logical screen pixel. Physical pixels depend on display scaling.')
+        actual.clicked.connect(self.actual_size_views);comparison_controls.addWidget(actual);comparison_controls.addStretch()
+        layout.addLayout(comparison_controls)
+        self.comparison_note=QLabel('');self.comparison_note.setWordWrap(True);layout.addWidget(self.comparison_note)
         self.metadata=QLabel('Load images to start. Wheel: zoom. Drag: pan.'); self.metadata.setWordWrap(True); layout.addWidget(self.metadata); body.addWidget(middle)
         panel=QWidget(); right=QVBoxLayout(panel); panel.setMinimumWidth(320)
         right.addWidget(QLabel('Ordered processing pipeline'))
@@ -224,7 +211,44 @@ class Workbench(QMainWindow):
         self.metadata.setText(f'{mode} | Output {w} × {h}, {channels} channels, uint8, range {self.final.min()}–{self.final.max()} | {elapsed:.1f} ms. Export and saved PNG always use original resolution.')
     def display_stage(self,*args):
         if self.final is None:return
-        i=self.stage.currentIndex(); self.after.show_array(self.outputs[i-1] if 0<i<=len(self.outputs) else self.final)
+        i=self.stage.currentIndex();processed=self.outputs[i-1] if 0<i<=len(self.outputs) else self.final
+        reference=self.before.image
+        same_size=reference is not None and reference.shape[:2]==processed.shape[:2]
+        self.link_views.setEnabled(same_size)
+        self.link_views.setToolTip('Link matching pixel coordinates in both views.' if same_size else 'Linked views need matching image dimensions; selection is retained until dimensions match.')
+        display=processed;heading='Processed / selected stage';note=''
+        if self.view_mode.currentText()=='Absolute difference':
+            if same_size:
+                display=absolute_difference(reference,processed);heading='Absolute difference / selected stage'
+                note=f'Absolute pixel difference: max {int(display.max())}, mean {float(display.mean()):.2f} (0–255). No alignment or quality score; saves/exports use the processed image.'
+            else:
+                note='Difference unavailable: image dimensions differ. Showing the processed image; no automatic resizing/alignment.'
+        self.after_heading.setText(heading);self.comparison_note.setText(note)
+        self.after.show_array(display)
+        self.sync_views(self.before,self.after)
+    def sync_views(self,source,target):
+        if self._syncing_views or not hasattr(self,'link_views') or not self.link_views.isEnabled() or not self.link_views.isChecked():return
+        if source.image is None or target.image is None or source.image.shape[:2]!=target.image.shape[:2]:return
+        self._syncing_views=True
+        try:
+            center=source.mapToScene(source.viewport().rect().center())
+            target.setTransform(source.transform());target.centerOn(center)
+        finally:self._syncing_views=False
+    def fit_views(self):
+        self._syncing_views=True
+        try:
+            self.before.fit();self.after.fit()
+            if self.link_views.isEnabled() and self.link_views.isChecked():
+                # Both images must fit even when the two viewport widths differ.
+                transform=min((self.before.transform(),self.after.transform()),key=lambda value:value.m11())
+                self.before.setTransform(transform);self.before.centerOn(self.before.sceneRect().center())
+        finally:self._syncing_views=False
+        self.sync_views(self.before,self.after)
+    def actual_size_views(self):
+        self._syncing_views=True
+        try:self.before.actual_size();self.after.actual_size()
+        finally:self._syncing_views=False
+        self.sync_views(self.before,self.after)
     def refresh_steps(self,index=None):
         self.update_recipe_title()
         if index is None:index=self.steps.currentRow()

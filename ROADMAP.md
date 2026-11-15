@@ -90,3 +90,5 @@ and introduce optional analysis tools. Promote completed work into
 [PATCH_NOTES.md](PATCH_NOTES.md) with its commit and validation evidence.
 
 Saved-state follow-up: title markers and Save/Discard/Cancel protection for open/close are now delivered. Undo/redo follows the saved baseline. Autosave/crash recovery and recent-file navigation remain planned.
+
+15 November 2026 update: linked zoom/pan, common Fit, 100% logical-pixel viewing and absolute-difference display are delivered. Canvas and comparison helpers are extracted from the main window. Size mismatch is explicit, no automatic registration is performed, and saving/export use processed pixels. Swipe/blink, ROI analysis, recovery and broader module cleanup remain planned.

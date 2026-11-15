@@ -1,13 +1,13 @@
 # Patch notes
 
-Last reviewed: 13 November 2026.
+Last reviewed: 15 November 2026.
 
 Completed entries below are reconstructed from the repository's commits and current
 implementation. Commit dates are shown as Europe/Berlin calendar dates. These are
 development patches, not invented semantic-version releases or release tags.
 Future items are proposals and are not included in the current application.
 
-## Current documentation update — 13 November 2026
+## Documentation baseline — 13 November 2026
 
 - Added this commit-linked history and a prioritized [roadmap](ROADMAP.md).
 - Reviewed interface clarity, code organization and candidate libraries.
@@ -15,6 +15,18 @@ Future items are proposals and are not included in the current application.
   installation, UI redesign or exported-script behavior changed in this update.
 
 ## Completed patches
+
+### 15 November 2026 — Linked views and pixel comparison
+
+- Added bidirectional linked zoom/pan for matching image dimensions, a 100% logical-pixel view and a common Fit scale when linked.
+- Added an absolute-difference display for the selected output stage against its preview input, including grayscale/RGB comparison and max/mean pixel-difference summaries.
+- Kept different image dimensions explicit: display the actual processed stage and disable linking until dimensions match, without automatic resizing or registration.
+- Kept PNG saving/export/generation tied to processed data while difference viewing is active.
+- Extracted image canvas code to canvas.py and pixel comparison to a NumPy-only comparison.py; standalone exports retain their existing independent runtime.
+- Added renderer options for comparison layout QA; fixed pixel inspection just outside the image boundary by using floor coordinates.
+- Validation: 79 tests run locally with one CUDA-only skip; inspected a rendered comparison window. Windows packaging and Linux CI are checked with this patch.
+- Future work: swipe/blink comparison, ROI statistics, autosave recovery and additional UI module extraction. Pixel differences are not quality or detector-accuracy estimates.
+
 
 ### 13 November 2026 — Unsaved recipe protection
 

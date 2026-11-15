@@ -41,6 +41,63 @@ class GuiTests(unittest.TestCase):
         self.add('grayscale'); self.assertEqual(self.window.final.ndim,2)
         self.assertEqual(self.window.stage.count(),2)
         self.window.gallery.setCurrentRow(1); self.wait_preview(); self.assertEqual(self.window.final.max(),0)
+    def test_difference_display_keeps_actual_output_and_saved_pixels(self):
+        self.add('brightness_contrast');self.window.change_parameter('brightness',20);self.wait_preview()
+        expected=self.window.final.copy()
+        self.window.view_mode.setCurrentText('Absolute difference')
+        from comparison import absolute_difference
+        np.testing.assert_array_equal(self.window.after.image,absolute_difference(self.window.before.image,expected))
+        np.testing.assert_array_equal(self.window.final,expected)
+        path=str(self.root/'actual-output.png')
+        with patch('workbench.QFileDialog.getSaveFileName',return_value=(path,'')):
+            self.window.save_output()
+        for _ in range(500):
+            self.app.processEvents();QTest.qWait(10)
+            if not self.window.save_jobs:break
+        self.assertFalse(self.window.save_jobs)
+        np.testing.assert_array_equal(engine.read_image(path),expected)
+    def test_difference_dimension_mismatch_is_explicit_and_linking_recovers(self):
+        self.window.link_views.setChecked(True)
+        step=engine.new_step('resize');step['params'].update(width=40,height=30)
+        self.window.commit({'version':1,'steps':[step]});self.wait_preview()
+        self.window.view_mode.setCurrentText('Absolute difference')
+        self.assertIn('dimensions differ',self.window.comparison_note.text())
+        np.testing.assert_array_equal(self.window.after.image,self.window.final)
+        self.assertFalse(self.window.link_views.isEnabled())
+        self.window.commit({'version':1,'steps':[]});self.wait_preview()
+        self.assertTrue(self.window.link_views.isEnabled());self.assertTrue(self.window.link_views.isChecked())
+        self.assertEqual(self.window.after.image.max(),0)
+    def test_difference_uses_selected_intermediate_and_supports_grayscale(self):
+        self.add('grayscale');self.add('brightness_contrast')
+        self.window.change_parameter('brightness',25);self.wait_preview()
+        from comparison import absolute_difference
+        self.window.view_mode.setCurrentText('Absolute difference');self.window.stage.setCurrentIndex(1)
+        np.testing.assert_array_equal(self.window.after.image,absolute_difference(self.window.before.image,self.window.outputs[0]))
+        self.assertEqual(self.window.after.image.shape,self.image.shape)
+        self.window.stage.setCurrentIndex(0)
+        np.testing.assert_array_equal(self.window.after.image,absolute_difference(self.window.before.image,self.window.final))
+    def test_linked_zoom_pan_and_actual_size_are_bidirectional(self):
+        image=np.zeros((800,1200,3),dtype=np.uint8)
+        self.window.before.show_array(image);self.window.after.show_array(image)
+        self.window.link_views.setEnabled(True);self.window.link_views.setChecked(True)
+        self.window.before.zoom(4)
+        self.assertAlmostEqual(self.window.before.transform().m11(),self.window.after.transform().m11())
+        self.window.before.centerOn(650,450);self.app.processEvents()
+        a=self.window.before.mapToScene(self.window.before.viewport().rect().center())
+        b=self.window.after.mapToScene(self.window.after.viewport().rect().center())
+        self.assertLess(abs(a.x()-b.x()),2);self.assertLess(abs(a.y()-b.y()),2)
+        self.window.after.zoom(1.2)
+        self.assertAlmostEqual(self.window.before.transform().m11(),self.window.after.transform().m11())
+        self.window.fit_views()
+        self.assertAlmostEqual(self.window.before.transform().m11(),self.window.after.transform().m11())
+        for canvas in (self.window.before,self.window.after):
+            self.assertLessEqual(canvas.sceneRect().width()*canvas.transform().m11(),canvas.viewport().width())
+            self.assertLessEqual(canvas.sceneRect().height()*canvas.transform().m22(),canvas.viewport().height())
+        self.window.actual_size_views()
+        self.assertAlmostEqual(self.window.before.transform().m11(),1.)
+        self.assertAlmostEqual(self.window.after.transform().m11(),1.)
+        self.window.link_views.setChecked(False);scale=self.window.after.transform().m11()
+        self.window.before.zoom(1.2);self.assertAlmostEqual(self.window.after.transform().m11(),scale)
     def test_unsaved_close_cancel_and_save_dialog_cancel(self):
         self.add('gamma')
         self.assertTrue(self.window.isWindowModified())
