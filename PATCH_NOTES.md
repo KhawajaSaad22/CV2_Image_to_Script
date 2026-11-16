@@ -1,6 +1,6 @@
 # Patch notes
 
-Last reviewed: 15 November 2026.
+Last reviewed: 16 November 2026.
 
 Completed entries below are reconstructed from the repository's commits and current
 implementation. Commit dates are shown as Europe/Berlin calendar dates. These are
@@ -15,6 +15,17 @@ Future items are proposals and are not included in the current application.
   installation, UI redesign or exported-script behavior changed in this update.
 
 ## Completed patches
+
+### 16 November 2026 — Recipe recovery and atomic saving
+
+- Added debounced per-window recipe recovery snapshots and File → Recover autosaved recipe. Valid recovered work remains unsaved until explicitly saved to a chosen file.
+- Used unique snapshot filenames and atomic replacement; normal save, clean open/undo and accepted close clear only the current window’s snapshot. Cancelled closes retain it. Snapshots from other windows are not silently deleted.
+- Added atomic recipe JSON writes so failed replacement preserves the previous file. Exported scripts retain their NumPy/OpenCV and standard-library dependency contract.
+- Added snapshot validation, a 4 MiB read limit, isolated test/render locations and clear autosave failure messages.
+- Replaced the accumulated review notes with a current roadmap: delivered foundation, prioritized milestones, acceptance checks and explicit limits.
+- Validation: 87 tests run locally, with one CUDA-only skip. Recovery tests cover restoration, failed writes, malformed snapshots, cancellation and separate-window ownership.
+- Future work: recent recipes, a richer recovery browser, background replay, operation search/reordering and explicit snapshot cleanup. Recovery stores recipes, not source images or full application state; edits before the debounce may be lost.
+
 
 ### 15 November 2026 — Linked views and pixel comparison
 

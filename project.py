@@ -19,6 +19,10 @@ class Document:
     def load(self,pipeline):
         self.pipeline=engine.validate(pipeline); self.undo_stack=[]; self.redo_stack=[]
         self.mark_saved()
+    def restore(self,pipeline):
+        updated=engine.validate(pipeline)
+        self.pipeline=updated;self.undo_stack=[];self.redo_stack=[]
+        self.saved_pipeline=None  # Recovered work needs an explicit recipe save.
     def commit(self,pipeline):
         updated=engine.validate(pipeline)
         if updated==self.pipeline:return

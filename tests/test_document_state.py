@@ -5,6 +5,12 @@ from project import Document
 
 
 class DocumentStateTests(unittest.TestCase):
+    def test_recovered_recipe_is_unsaved_until_explicitly_saved(self):
+        doc=Document();recipe={'version':1,'steps':[]}
+        doc.restore(recipe);self.assertTrue(doc.dirty)
+        doc.mark_saved();self.assertFalse(doc.dirty)
+        with self.assertRaises(ValueError):doc.restore({'version':999,'steps':[]})
+        self.assertEqual(doc.pipeline,recipe);self.assertFalse(doc.dirty)
     def test_saved_state_follows_undo_redo_and_noops(self):
         doc=Document();self.assertFalse(doc.dirty)
         recipe={'version':1,'steps':[engine.new_step('gamma')]}

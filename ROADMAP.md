@@ -1,94 +1,109 @@
-# Workbench improvement roadmap
+# CV2 Image to Script roadmap
 
-Reviewed 13 November 2026 against the code and Git history. This is a proposal;
-the documentation update does not install libraries or implement these features.
-The initial 60-test suite passed during that review.
+Updated 16 November 2026. This is the current delivery plan. Completed features
+are distinguished from proposals; dates below describe delivered patches, not
+promised release deadlines. Detailed history lives in [PATCH_NOTES.md](PATCH_NOTES.md).
 
-Implementation update: guided controls/Advanced JSON, grouped menus, viewport
-preservation and asynchronous exact saving are now delivered, with 64 passing local
-tests. The observation table below records the original review; linked views,
-background replay, recovery, drag/drop and structural cleanup remain planned.
+## Delivered foundation
 
-## First priority: make the current workflow clearer
+| Area | Current behavior |
+|---|---|
+| Pipeline editing | Validated operations, ordering, enable/disable, duplication, undo/redo and guided random settings |
+| Inspection | Fast/Exact previews, intermediate stages, pixel readout, preserved viewport, linked zoom/pan, Fit, 100% and absolute differences |
+| Saving and recovery | Background exact PNG save, saved-state marker, Save/Discard/Cancel protection, atomic recipe writes and per-window recovery snapshots |
+| Export | Independent NumPy/OpenCV fixed scripts and reproducible paired dataset-generation bundles |
+| Optional GPU | Supported CUDA preprocessing with explicit CPU fallback and execution metadata; default packaging remains CPU-compatible |
+| Packaging | Windows portable application/installer and Linux container checks |
+| Code organization | Separate canvas, comparison, document/export and recovery modules |
 
-| Current observation | Proposed change | Acceptance check |
-|---|---|---|
-| Several equally prominent toolbar actions plus a second generation row | Group Open/Save, Preview, Export and Dataset actions; move secondary commands into menus | Core workflow is clear at 1280x720 and with keyboard navigation |
-| Random rules are edited in `QPlainTextEdit` as JSON | Native controls for Fixed / Uniform range / Discrete choices, probability and valid odd kernels; retain an Advanced JSON view | UI and JSON round-trip to the same validated recipe |
-| `Canvas.show_array()` always calls `fit()` | Preserve zoom/pan for parameter changes; add linked views, explicit Fit and 100% actions | Refreshing settings does not move the inspected location; geometry changes have a defined reset policy |
-| Exact PNG save and replay run synchronously | Worker jobs with visible progress, job state and immutable input/recipe snapshots | UI stays responsive and saved output matches the initiating recipe |
-| Pipeline list uses Up/Down and raw operation keys | Searchable categorized operations, readable names, drag/drop order and contextual help | Order, enabled state and undo/redo remain correct |
-| No saved-state marker in `Document` | Dirty-state tracking, save/discard prompt, recent recipes and autosave recovery | Closing/reopening cannot silently discard unsaved work |
-| Styling mixes a palette with hard-coded 12px rules | Centralize spacing/font/theme tokens; test high DPI and light/dark modes | Labels, focus and controls remain legible at supported scaling factors |
+The 16 November recovery patch debounces snapshots by one second. Recovery is
+explicit through File → Recover autosaved recipe, not automatic replacement of
+the current document. Snapshots contain recipe settings and optional recipe path,
+not images, image galleries, undo history or GPU state. They are not a guarantee
+against edits lost before the timer fires, failed writes or disk/power failure.
 
-Prefer PySide6's existing `QAction`, menus, toolbars, layouts, `QSettings` and worker
-infrastructure before introducing a new UI framework. Keep numerical preprocessing
-controls visible; model/package implementation details need not appear in the main UI.
+## Next milestone: navigation and recovery usability
 
-## Second priority: maintainability and reliability
+Priority: high. Status: planned.
 
-- Split `workbench.py` into canvas, parameter panel, action/controller and worker
-  modules. Keep `engine.py`, document state and dataset logic independent of Qt.
-- Expand semicolon-compressed functions, add types at public boundaries, and apply
-  a consistent formatter/linter in a separate behavior-preserving change.
-- Extend the operation registry to hold labels, help, parameter widgets, random
-  rules, annotation support and export requirements in one place.
-- Version recipe migrations explicitly. Preserve old replay semantics; never silently
-  reinterpret a historical transform. Maintain old-recipe fixtures in CI.
-- Define an asynchronous error/job state for previews, exact saves and generation.
-  Cooperative cancellation occurs between OpenCV calls, not inside them.
-- Use a dedicated locked development environment after Windows/Linux validation;
-  record runtime versions in bundles and generated reports.
-- Add clean Windows installer/update/uninstall checks and accessible focus/tab order.
-  Keep actual desktop tests distinct from offscreen widget tests.
+- Recent recipes with missing-file diagnostics and bounded history.
+- A recovery browser showing original recipe name, saved time and validation
+  status, with explicit preview/restore/delete actions.
+- Clearly distinguish snapshots belonging to open windows before adding automated
+  cleanup or retention. Never delete another window's working snapshot silently.
+- Searchable operation list with readable labels and categories.
+- Drag/drop ordering that preserves step IDs, selected settings, random rules and
+  undo/redo behavior.
 
-The main compatibility contract is unchanged: exported fixed scripts and generation
-bundles run independently of Qt. Optional libraries must not silently become required
-by an export that claims to need only NumPy/OpenCV.
+Acceptance: cancelled/failed opens preserve the current recipe; missing and malformed
+files produce useful messages; moving a step keeps its identity and sampled rules;
+recovery deletion requires an explicit user action and affects only the selected entry.
 
-## Useful additions after the cleanup
+## Next milestone: responsive long-running work
 
-1. Before/after swipe and blink comparison, overlay opacity and a difference view.
-2. Channel histograms and ROI statistics, clearly distinguishing preview pixels from
-   original-image coordinates. A histogram/contrast score is not a quality guarantee.
-3. Interactive ROI/crop selection with coordinate round-trip checks.
-4. Preset browser with thumbnails, descriptions and before/after examples.
-5. Bilateral denoising, connected-component analysis and perspective correction as
-   separate operations with explicit mask/box/keypoint support or rejection.
-6. Batch QA: empty/near-identical outputs, clipping/saturation, blur indicators,
-   sample contact sheets and downloadable quality summaries.
-7. COCO and YOLO adapters with explicit class/category mapping and coordinate tests;
-   importing an annotation format does not require running a YOLO model.
-8. Optional video-frame sampling after the image workflow is stable. Video timing,
-   cancellation and output-size limits need their own design.
+Priority: high. Status: planned.
 
-## Library candidates
+- Background replay with immutable inputs and visible progress/cancellation.
+- A consistent job-state display for preview, replay, exact save and dataset generation.
+- Isolate parameter-panel and job-controller code from the main window.
+- Measure large-image comparison latency and memory before introducing asynchronous
+  difference rendering or additional intermediate copies.
 
-These are candidates to prototype, not new requirements. Prefer adding a dependency
-only when it removes meaningful custom code or enables an agreed feature.
+Acceptance: stale job results never replace current work; cancellation does not label
+partial output complete; closing does not abandon a queued exact save; jobs retain
+the image/recipe snapshot from when they started.
 
-| Candidate | Appropriate use | Adoption condition |
-|---|---|---|
-| [superqt](https://pyapp-kit.github.io/superqt/widgets/qrangeslider/) | Labeled floating/range sliders and collapsible controls | Verify the PySide6 backend, high-DPI behavior and packaged build; native Qt is sufficient for the first redesign |
-| [pyqtgraph ImageView](https://pyqtgraph.readthedocs.io/en/latest/api_reference/widgets/imageview.html) | Histograms, ROI analysis and scientific image inspection | Prototype a separate analysis panel first; do not replace a working canvas solely for styling |
-| [Ruff](https://docs.astral.sh/ruff/) | Consistent formatting, imports and lint checks | Development-only; introduce a baseline and avoid mixing large formatting diffs with behavior changes |
-| [Pydantic JSON Schema](https://docs.pydantic.dev/latest/concepts/json_schema/) | Typed application/manifests and clearer boundary errors | Do not duplicate the existing operation registry or force an undeclared dependency into standalone exports |
-| [scikit-image metrics](https://scikit-image.org/docs/stable/api/skimage.metrics.html) | Optional SSIM/PSNR and additional analysis operations | Validate dtype, channel range and interpretation; image similarity does not measure defect-detection accuracy |
+## Later milestone: richer visual inspection
 
-License references reviewed: [superqt](https://github.com/pyapp-kit/superqt/blob/main/LICENSE),
-[pyqtgraph](https://github.com/pyqtgraph/pyqtgraph/blob/master/LICENSE.txt),
-[Ruff](https://github.com/astral-sh/ruff/blob/main/LICENSE), and
-[scikit-image](https://github.com/scikit-image/scikit-image/blob/main/LICENSE.txt).
-Check the exact packaged versions and required notices when adopting a candidate.
-No paid model or hosted API is needed for the first cleanup milestones.
+Priority: medium. Status: planned.
 
-## Suggested implementation order
+- Before/after swipe and blink, optional overlays and accessible comparison controls.
+- ROI selection, channel histograms and pixel statistics.
+- Explicit original-image versus Fast-preview coordinates for interactive crop/ROI.
+- Keyboard navigation, high-DPI layout checks and a consistent spacing/theme system.
 
-First implement guided random controls, preserve viewport state and group actions.
-Next add asynchronous exact save plus dirty-state protection. Then extract UI modules
-and introduce optional analysis tools. Promote completed work into
-[PATCH_NOTES.md](PATCH_NOTES.md) with its commit and validation evidence.
+Acceptance: crop coordinates round-trip correctly; overlays do not change export
+pixels; different-sized images are not silently treated as registered; comparisons
+remain display tools rather than model-accuracy or image-quality claims.
 
-Saved-state follow-up: title markers and Save/Discard/Cancel protection for open/close are now delivered. Undo/redo follows the saved baseline. Autosave/crash recovery and recent-file navigation remain planned.
+## Later milestone: dataset quality and interoperability
 
-15 November 2026 update: linked zoom/pan, common Fit, 100% logical-pixel viewing and absolute-difference display are delivered. Canvas and comparison helpers are extracted from the main window. Size mismatch is explicit, no automatic registration is performed, and saving/export use processed pixels. Swipe/blink, ROI analysis, recovery and broader module cleanup remain planned.
+Priority: medium. Status: planned.
+
+- Batch QA for duplicates, empty outputs, clipping and blur indicators, with retained
+  manifests and contact sheets.
+- Reviewed COCO/other annotation adapters with class mapping and coordinate tests.
+- Additional operations only with explicit paired-mask/box/keypoint support or clear
+  rejection when the transform is unsupported.
+- Larger synthetic fixtures and real-data evaluation after suitable data is supplied.
+
+Acceptance: source grouping is preserved across train/validation/test; segmentation
+class IDs and image geometry stay consistent; duplicate/quality warnings do not
+pretend to establish label correctness or real detector performance.
+
+## Later milestone: measured performance and distribution
+
+Priority: medium. Status: planned.
+
+- Benchmark real mixed CPU/CUDA recipes, including transfers and intermediate previews.
+- Prototype more CUDA operations and persistent device buffers only after identifying
+  a measured bottleneck; retain explicit fallback and parity checks.
+- Lock validated deployment dependencies and retain third-party notices.
+- Broaden packaged-app launch, installer update/uninstall and Linux runtime checks.
+- Record reproducible performance inputs, source versions and measurement scope.
+
+Acceptance: speed comparisons use the same recipe/input with numerical checks;
+default CPU installation remains usable; exported fixed scripts stay independent of
+Qt and optional model libraries; no generic real-time or storage-saving guarantee.
+
+## Working order and verification
+
+Implement navigation/recovery usability and responsive jobs first, then richer
+inspection and dataset tooling. Keep formatting-only cleanup separate from behavior
+changes. Prefer existing Qt, OpenCV, NumPy and standard-library capabilities; add a
+library only after a focused prototype demonstrates a benefit.
+
+Each delivered patch updates the README and patch notes, runs appropriate regression
+checks, and verifies changed GUI flows. Windows packaging and Linux CI remain release
+checks. CUDA-specific tests need an actual CUDA environment and may be explicitly
+skipped in CPU CI; a passing CPU build does not validate GPU execution.

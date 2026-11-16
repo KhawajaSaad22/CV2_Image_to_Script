@@ -6,6 +6,8 @@ import argparse
 import copy
 import json
 import math
+import os
+import tempfile
 import hashlib
 from pathlib import Path
 import time
@@ -192,7 +194,24 @@ def write_image(path,image):
     path.parent.mkdir(parents=True,exist_ok=True); encoded.tofile(str(path))
 
 
-def save_pipeline(path,pipeline): Path(path).write_text(json.dumps(validate(pipeline),indent=2),encoding='utf-8')
+def atomic_write_json(path, data):
+    """Replace a JSON file only after its new contents have been written fully."""
+    path = Path(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.' + path.name + '.', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(data, stream, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def save_pipeline(path,pipeline): atomic_write_json(path,validate(pipeline))
 def load_pipeline(path): return validate(json.loads(Path(path).read_text(encoding='utf-8')))
 
 

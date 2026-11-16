@@ -25,7 +25,7 @@ class GuiTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name)
         self.image=np.random.default_rng(7).integers(0,256,(80,100,3),dtype=np.uint8)
         engine.write_image(self.root/'one.png',self.image); engine.write_image(self.root/'two.png',np.zeros_like(self.image))
-        self.window=Workbench(); self.window.show(); self.window.load_paths([str(self.root/'one.png'),str(self.root/'two.png')]); self.wait_preview()
+        self.window=Workbench(session_dir=self.root/'recovery'); self.window.show(); self.window.load_paths([str(self.root/'one.png'),str(self.root/'two.png')]); self.wait_preview()
     def tearDown(self):
         self.window.document.mark_saved()
         self.window.close(); self.window.deleteLater()
@@ -41,6 +41,46 @@ class GuiTests(unittest.TestCase):
         self.add('grayscale'); self.assertEqual(self.window.final.ndim,2)
         self.assertEqual(self.window.stage.count(),2)
         self.window.gallery.setCurrentRow(1); self.wait_preview(); self.assertEqual(self.window.final.max(),0)
+    def test_autosave_restore_and_explicit_save_cleanup(self):
+        from recovery import read_snapshot
+        self.add('gamma');self.window.recovery_timer.stop();self.window.autosave_recipe()
+        saved=copy.deepcopy(self.window.document.pipeline);snapshot=self.window.recovery.path
+        self.assertEqual(read_snapshot(snapshot)['pipeline'],saved)
+        other=self.root/'other-window.json';other.write_bytes(snapshot.read_bytes())
+        self.window.commit({'version':1,'steps':[]});self.wait_preview()
+        with patch('workbench.QFileDialog.getOpenFileName',return_value=(str(other),'')):
+            self.window.recover_recipe()
+        self.assertEqual(self.window.document.pipeline,saved);self.assertTrue(self.window.document.dirty)
+        self.assertIsNone(self.window.recipe_path);self.assertTrue(other.exists())
+        target=self.root/'restored.json'
+        with patch('workbench.QFileDialog.getSaveFileName',return_value=(str(target),'')):
+            self.assertTrue(self.window.save_pipeline())
+        self.assertFalse(snapshot.exists());self.assertTrue(other.exists())
+    def test_failed_recovery_and_cancelled_close_leave_work_available(self):
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtGui import QCloseEvent
+        self.add('flip');self.window.recovery_timer.stop();self.window.autosave_recipe()
+        before=copy.deepcopy(self.window.document.pipeline);snapshot=self.window.recovery.path
+        invalid=self.root/'bad-snapshot.json';invalid.write_text('{}')
+        with patch('workbench.QFileDialog.getOpenFileName',return_value=(str(invalid),'')),patch('workbench.QMessageBox.warning'):
+            self.window.recover_recipe()
+        self.assertEqual(self.window.document.pipeline,before)
+        with patch('workbench.QMessageBox.question',return_value=QMessageBox.StandardButton.Cancel):
+            event=QCloseEvent();self.window.closeEvent(event);self.assertFalse(event.isAccepted())
+        self.assertTrue(snapshot.exists())
+        with patch('workbench.QMessageBox.question',return_value=QMessageBox.StandardButton.Discard):
+            event=QCloseEvent();self.window.closeEvent(event);self.assertTrue(event.isAccepted())
+        self.assertFalse(snapshot.exists())
+    def test_debounced_autosave_and_error_message_preserve_recipe(self):
+        self.window.recovery_timer.setInterval(20);self.add('gamma')
+        for _ in range(100):
+            self.app.processEvents();QTest.qWait(10)
+            if self.window.recovery.path.exists():break
+        self.assertTrue(self.window.recovery.path.exists())
+        with patch.object(self.window.recovery,'write',side_effect=OSError('disk unavailable')):
+            self.window.autosave_recipe()
+        self.assertIn('save the recipe manually',self.window.statusBar().currentMessage())
+        self.assertTrue(self.window.document.dirty)
     def test_difference_display_keeps_actual_output_and_saved_pixels(self):
         self.add('brightness_contrast');self.window.change_parameter('brightness',20);self.wait_preview()
         expected=self.window.final.copy()

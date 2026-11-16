@@ -8,7 +8,7 @@ import threading
 import time
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt,QObject,Signal,QTimer,QRunnable,QThreadPool
+from PySide6.QtCore import Qt,QObject,Signal,QTimer,QRunnable,QThreadPool,QStandardPaths
 from PySide6.QtGui import QAction,QFont,QFontDatabase,QPalette,QColor
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QPushButton,QComboBox,QListWidget,QListWidgetItem,QSplitter,QFileDialog,QCheckBox,
@@ -17,9 +17,10 @@ import engine
 from project import Document,export_script
 from canvas import Canvas,qimage
 from comparison import absolute_difference
+from recovery import RecoveryStore,read_snapshot
 
 def configure_app():
-    app=QApplication.instance(); app.setStyle('Fusion')
+    app=QApplication.instance();app.setApplicationName('CV2Workbench');app.setOrganizationName('CV2ImageToScript'); app.setStyle('Fusion')
     if not QFontDatabase.families() and os.name=='nt':
         QFontDatabase.addApplicationFont(str(Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts'/'segoeui.ttf'))
     families=QFontDatabase.families()
@@ -78,16 +79,20 @@ class ExactSave(QRunnable):
         finally:self.signals.finished.emit(self.identity)
 
 class Workbench(QMainWindow):
-    def __init__(self):
+    def __init__(self,session_dir=None):
         super().__init__(); configure_app(); self.setWindowTitle('CV2 Image to Script — Pipeline Workbench'); self.resize(1500,900)
         self.document=Document(); self.recipe_path=None; self.paths=[]; self.original=None; self.outputs=[]; self.final=None
         self.revision=0; self.cancel=threading.Event(); self.cache={}; self.cache_scope=None; self.worker_refs={}
         self.save_jobs={};self.next_save=0;self._syncing_views=False
+        directory=Path(session_dir) if session_dir is not None else Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))/'recovery'
+        self.recovery=RecoveryStore(directory)
+        self.recovery_timer=QTimer(self);self.recovery_timer.setSingleShot(True);self.recovery_timer.setInterval(1000)
+        self.recovery_timer.timeout.connect(self.autosave_recipe)
         self.pool=QThreadPool(self); self.pool.setMaxThreadCount(1)
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(160); self.timer.timeout.connect(self.start_preview)
         root=QWidget(); self.setCentralWidget(root); main=QVBoxLayout(root)
         files=self.menuBar().addMenu('File')
-        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Export fixed Python (CPU)',self.export),('Save exact processed PNG',self.save_output)]:
+        for text,callback in [('Add images',self.open_images),('Open pipeline',self.open_pipeline),('Save pipeline',self.save_pipeline),('Recover autosaved recipe',self.recover_recipe),('Export fixed Python (CPU)',self.export),('Save exact processed PNG',self.save_output)]:
             action=QAction(text,self);action.triggered.connect(callback);files.addAction(action)
         datasets=self.menuBar().addMenu('Dataset')
         for text,callback in [('Random settings for selected step',self.random_settings),('Generate / random preview',self.generation),('Replay generated record',self.replay_generated)]:
@@ -141,6 +146,7 @@ class Workbench(QMainWindow):
         for shortcut,callback in [('Ctrl+Z',self.undo),('Ctrl+Y',self.redo),('Ctrl+O',self.open_images),('Ctrl+S',self.save_pipeline)]:
             action=QAction(self); action.setShortcut(shortcut); action.triggered.connect(callback); self.addAction(action)
         self.setStyleSheet('QMainWindow {background:#171c24;} QWidget {font-size:12px;} QPushButton {padding:6px;} QListWidget {min-height:100px;}')
+        if self.recovery.available():self.statusBar().showMessage('Recovery snapshots are available in File → Recover autosaved recipe. Some may belong to open windows.')
 
     def error(self,message): self.statusBar().showMessage(message); self.metadata.setText('Error: '+message)
     def random_settings(self):
@@ -331,6 +337,24 @@ class Workbench(QMainWindow):
         name=self.recipe_path.name if self.recipe_path else 'Untitled recipe'
         self.setWindowTitle(name+'[*] — CV2 Image to Script')
         self.setWindowModified(self.document.dirty)
+        if self.document.dirty:self.recovery_timer.start()
+        else:
+            self.recovery_timer.stop()
+            try:self.recovery.clear()
+            except OSError as exc:self.statusBar().showMessage('Could not clear this window’s recovery snapshot: '+str(exc))
+    def autosave_recipe(self):
+        if not self.document.dirty:return
+        try:self.recovery.write(self.document.pipeline,self.recipe_path)
+        except (OSError,ValueError) as exc:self.statusBar().showMessage('Recovery autosave failed; save the recipe manually: '+str(exc))
+    def recover_recipe(self):
+        path,_=QFileDialog.getOpenFileName(self,'Recover snapshot (may belong to an open window)',str(self.recovery.directory),'Recovery snapshots (*.json)')
+        if not path:return
+        try:
+            record=read_snapshot(path)
+            if not self.confirm_unsaved():return
+            self.document.restore(record['pipeline']);self.recipe_path=None;self.refresh_steps(0)
+            self.statusBar().showMessage('Recovered recipe as unsaved work. Save it to a chosen recipe file.')
+        except (OSError,ValueError) as exc:QMessageBox.warning(self,'Recovery failed',str(exc))
     def confirm_unsaved(self):
         if not self.document.dirty:return True
         buttons=QMessageBox.StandardButton
@@ -357,6 +381,9 @@ class Workbench(QMainWindow):
         if self.save_jobs:
             self.statusBar().showMessage('An exact save is running. Close again after it finishes.');event.ignore();return
         if not self.confirm_unsaved():event.ignore();return
+        self.recovery_timer.stop()
+        try:self.recovery.clear()
+        except OSError as exc:self.statusBar().showMessage('Could not clear this window’s recovery snapshot: '+str(exc))
         self.cancel.set(); self.timer.stop(); self.pool.clear(); self.pool.waitForDone(); super().closeEvent(event)
 
 if __name__=='__main__':

@@ -15,7 +15,7 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--comparison',action='store_true',help='Show absolute difference and linked views')
 parser.add_argument('--output',type=Path,default=Path('artifacts/workbench.png'))
 args=parser.parse_args()
-main(); app=QApplication([]); app.setStyle('Fusion'); window=Workbench(); window.show()
+main(); app=QApplication([]); app.setStyle('Fusion'); window=Workbench(session_dir=Path('artifacts/render-recovery')); window.show()
 window.load_paths([str(p) for p in sorted(Path('data/demo').glob('*.png'))])
 window.commit(engine.load_pipeline('examples/edge_inspection.json'),2)
 def capture():

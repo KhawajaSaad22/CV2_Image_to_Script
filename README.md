@@ -1,7 +1,7 @@
 # CV2 Image to Script — Pipeline Workbench
 
 See [Patch notes](PATCH_NOTES.md) for completed changes and
-[Roadmap](ROADMAP.md) for proposed UI cleanup, features and library options.
+[Roadmap](ROADMAP.md) for delivered features, priorities and acceptance checks.
 
 Usability update: guided Fixed / Range / Choices controls retain an Advanced JSON
 editor. Preview updates preserve the inspected view when dimensions are unchanged.
@@ -26,7 +26,8 @@ intermediate results, and exporting standalone OpenCV/NumPy code.
 - Inspect any intermediate stage, dimensions, channels, value range, and timings.
 - Choose fast previews or exact full-resolution processing.
 - Undo/redo pipeline configuration, including parameter changes and ordering.
-- Save/reopen versioned pipeline JSON.
+- Save/reopen versioned pipeline JSON with atomic replacement.
+- Recover recipe settings from isolated, debounced per-window snapshots.
 - Export a self-contained Python script for one image or a recursive folder batch.
 - Save the exact processed image as PNG.
 - Randomize parameter ranges/choices and per-operation probabilities with stable seeds.
@@ -327,6 +328,7 @@ library adapters, and broader real-dataset validation remain future work.
 - `workbench.py`: desktop editor, controls, comparison coordination, and preview worker.
 - `canvas.py`: image canvases, pixel inspection, zoom/pan and logical-pixel scaling.
 - `comparison.py`: NumPy-only absolute pixel differences, independent of Qt.
+- `recovery.py`: validated per-window recipe snapshots and explicit recovery.
 - `augmentation.py`, `dataset.py`: deterministic sampling, paired transforms, generation/replay.
 - `generation_ui.py`: random settings, contact sheets, and cancellable generation dialog.
 - `workbench.spec`, `installer.iss`: portable Windows application and installer build.
@@ -344,7 +346,7 @@ Optional CUDA preprocessing is available for preview, exact saving and the dedic
 
 Recipes now track saved state independently of undo/redo. An asterisk marks unsaved changes in the window title. Opening another recipe or closing offers Save, Discard or Cancel. A cancelled save dialog or failed save keeps the recipe dirty and cancels the pending action. Opening a valid recipe establishes a clean baseline and clears the previous recipe's undo history. Exporting scripts/images does not mark a recipe saved.
 
-This protects normal close/open workflows; autosave, crash recovery and recent-file history remain future work. Local validation: 72 tests run, with one CUDA-only skip in the CPU environment.
+This protects normal close/open workflows. Debounced recipe recovery is now delivered in the 16 November update below; recent-file history and a richer recovery browser remain planned. Local validation: 72 tests run, with one CUDA-only skip in the CPU environment.
 
 ## Before/after inspection — 15 November 2026
 
@@ -353,3 +355,11 @@ The Display selector switches the right pane between the selected processed stag
 Link zoom / pan synchronizes both views in either direction when their dimensions match. Different dimensions disable linking while preserving the checkbox preference for when sizes match again. Fit both views uses a common fitting scale when linked. The 100% button maps each image pixel to one logical screen pixel; physical pixel sizes depend on display scaling. Different viewport boundaries may clamp panning near image edges.
 
 These controls affect display only. The difference is computed against the current preview input and selected stage; Fast mode may use reduced pixels, while Exact uses original resolution. PNG saves, standalone exports and dataset generation continue to use the actual processed data. New GUI tests cover linking, size mismatch, intermediate stages and saving while the difference view is active. No new dependency is required.
+
+## Recipe recovery — 16 November 2026
+
+Unsaved recipe changes schedule a recovery snapshot after one second without another edit. Snapshots are written atomically to the app’s standard local-data recovery folder, with a separate filename for each window. They contain recipe settings, save time and an optional source recipe path; they do not contain images, gallery contents, undo history or GPU state. Recipe JSON saves also use atomic replacement so a failed write leaves the previous saved file intact.
+
+Use File → Recover autosaved recipe to choose a snapshot. Recovery validates the file before replacing the document, applies the existing Save/Discard/Cancel protection, and restores it as unsaved work with no save destination selected. Saving, returning to a clean document or accepting a close clears only that window’s own snapshot. Cancelled closes retain it. Selecting another window’s snapshot does not delete it. On startup, a status message points to recovery if snapshots exist; some can belong to currently open windows. There is no automatic startup restore or automatic deletion of other snapshots.
+
+Snapshots are local recipe copies and can contain recipe file paths. Manage stale copies explicitly through the recovery folder; a browser/retention UI is planned. The file chooser shows that folder, and oversized or invalid snapshots are rejected. Recovery is best effort: edits made before the timer fires, failed writes and disk/power failure can still cause loss. Keep important recipes explicitly saved. No additional dependency is required. See [the current roadmap](ROADMAP.md) for prioritized next work and acceptance checks.
